@@ -2,7 +2,7 @@
   "name": "kunpet",
   "displayName": "kunPet",
   "description": "鲲桌宠：Agent 本轮结束时庆祝并通知",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "kunpet",
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Other"],

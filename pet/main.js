@@ -11,6 +11,8 @@ const {
 
 let win;
 let tray;
+/** @type {Electron.Menu|null} */
+let trayMenu = null;
 let rendererReady = false;
 const pendingRendererEvents = [];
 
@@ -105,6 +107,10 @@ function tweenWithStyle(styleId, targetX, targetY, onDone) {
   activeTween = setInterval(() => {
     if (!win || win.isDestroyed()) {
       cancelTween();
+      // 避免卡在 walking-* 导致后续 celebrate 异常
+      if (petState === "walking-to-center" || petState === "walking-back") {
+        setPetState("idle");
+      }
       return;
     }
     const t = Math.min(1, (Date.now() - started) / durationMs);
@@ -177,10 +183,11 @@ function beginCelebrate(walkToCenter) {
 
   const shouldWalk = walkToCenter !== false;
   walkEnabledForCurrentCelebrate = shouldWalk;
+  const previous = petState;
 
   if (!shouldWalk) {
     cancelTween();
-    if (petState === "walking-to-center" || petState === "walking-back") {
+    if (previous === "walking-to-center" || previous === "walking-back") {
       sendWalkEnd();
     }
     activeWalkStyle = null;
@@ -189,32 +196,24 @@ function beginCelebrate(walkToCenter) {
     return;
   }
 
-  activeWalkStyle = pickWalkStyleId();
-
-  if (petState === "walking-back") {
-    cancelTween();
-    sendWalkEnd();
-    const pos = getWindowPos();
-    originPosition = { x: pos.x, y: pos.y };
-    setPetState("walking-to-center");
-    const center = getPrimaryCenterPos();
-    tweenWithStyle(activeWalkStyle, center.x, center.y, () => {
-      celebrateInPlace();
-    });
-    return;
-  }
-
-  if (petState === "celebrate") {
+  // 已在庆祝：只重播，不重新走路
+  if (previous === "celebrate") {
     sendToRenderer("pet:celebrate");
     return;
   }
 
-  if (petState === "walking-to-center") {
-    return;
+  // 取消进行中的走路（含 walking-to-center：旧逻辑直接 return 会导致永远无法再庆祝）
+  if (previous === "walking-to-center" || previous === "walking-back") {
+    cancelTween();
+    sendWalkEnd();
   }
 
+  activeWalkStyle = pickWalkStyleId();
   const pos = getWindowPos();
-  originPosition = { x: pos.x, y: pos.y };
+  // 从待机/对话位出发时刷新原点；中断回程时保留原 origin
+  if (previous === "idle" || previous === "working" || !originPosition) {
+    originPosition = { x: pos.x, y: pos.y };
+  }
   setPetState("walking-to-center");
   const center = getPrimaryCenterPos();
   tweenWithStyle(activeWalkStyle, center.x, center.y, () => {
@@ -226,14 +225,8 @@ function beginReturnIdle() {
   if (!win) return;
   if (petState === "idle") return;
   if (petState === "walking-back") return;
-
-  if (petState === "working") {
-    pendingHomePose = null;
-    activeWalkStyle = null;
-    setPetState("idle");
-    sendToRenderer("pet:idle");
-    return;
-  }
+  // 对话中（working）：sessionStart 的 return-idle 不应把插兜打回待机
+  if (petState === "working") return;
 
   cancelTween();
 
@@ -396,31 +389,35 @@ function emitToExtension(msg) {
 
 function rebuildTrayMenu() {
   if (!tray) return;
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: "显示", click: () => win?.showInactive() },
-      { label: "隐藏", click: () => win?.hide() },
-      { type: "separator" },
-      {
-        label: "走到中间",
-        type: "checkbox",
-        checked: prefsWalkToCenter,
-        click: (item) => {
-          prefsWalkToCenter = item.checked;
-          emitToExtension({ type: "request-walk-to-center", value: item.checked });
-        },
+  trayMenu = Menu.buildFromTemplate([
+    { label: "显示", click: () => win?.showInactive() },
+    { label: "隐藏", click: () => win?.hide() },
+    { type: "separator" },
+    {
+      label: prefsWalkToCenter ? "关闭走到中间" : "开启走到中间",
+      click: () => {
+        const next = !prefsWalkToCenter;
+        prefsWalkToCenter = next;
+        emitToExtension({ type: "request-walk-to-center", value: next });
+        rebuildTrayMenu();
       },
-      { type: "separator" },
-      {
-        label: "禁用桌宠",
-        click: () => emitToExtension({ type: "request-disable" }),
-      },
-      {
-        label: "打开设置…",
-        click: () => emitToExtension({ type: "request-open-settings" }),
-      },
-    ])
-  );
+    },
+    { type: "separator" },
+    {
+      label: "禁用桌宠",
+      click: () => emitToExtension({ type: "request-disable" }),
+    },
+    {
+      label: "打开设置",
+      click: () => emitToExtension({ type: "request-open-settings" }),
+    },
+  ]);
+  // macOS/Linux 依赖 setContextMenu；Windows 用 right-click + popUp，避免菜单不出现
+  if (process.platform === "win32") {
+    tray.setContextMenu(null);
+  } else {
+    tray.setContextMenu(trayMenu);
+  }
 }
 
 function setupTray() {
@@ -428,6 +425,12 @@ function setupTray() {
   tray = new Tray(img);
   tray.setToolTip("kunPet");
   rebuildTrayMenu();
+  if (process.platform === "win32") {
+    tray.on("right-click", (_event, bounds) => {
+      if (!trayMenu) rebuildTrayMenu();
+      if (trayMenu) tray.popUpContextMenu(trayMenu, bounds);
+    });
+  }
 }
 
 app.whenReady().then(async () => {

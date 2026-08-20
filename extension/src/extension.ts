@@ -89,14 +89,19 @@ function handleStop(): void {
   pet?.send({ type: "celebrate", walkToCenter });
 }
 
-function handleAgentStart(): void {
+function handleAgentStart(e: { type: string }): void {
   const { enabled } = currentSettings();
   if (!enabled) {
     log("[disabled] agent_start received, pet not running");
     return;
   }
-  // 对话进行中：插兜 wink；若正在庆祝则先走回再切 working
-  pet?.send({ type: "working" });
+  // 仅 beforeSubmitPrompt：进入对话 → 插兜 wink
+  // sessionStart：只解除庆祝回到待机，避免完成后被再次拉成 wink 且卡住庆祝
+  if (e.type === "agent_prompt") {
+    pet?.send({ type: "working" });
+    return;
+  }
+  pet?.send({ type: "return-idle" });
 }
 
 function log(message: string): void {
@@ -136,7 +141,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   try {
     const server = await startEventServer({
       onAgentStop: () => handleStop(),
-      onAgentStart: () => handleAgentStart(),
+      onAgentStart: (e) => handleAgentStart(e),
     });
     eventPort = server.port;
     closeServer = server.close;

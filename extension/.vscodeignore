@@ -1,0 +1,8 @@
+src/**
+tsconfig.json
+src/test/**
+**/*.ts
+!out/**/*.js
+# Exclude extension-root node_modules (devDeps). Pet ships without Electron.
+/node_modules/**
+pet/node_modules/**
