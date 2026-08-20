@@ -105,6 +105,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   pet.onMoved = (x, y) => {
     void context.globalState.update(POSITION_KEY, { x, y });
   };
+  pet.onRequestDisable = () => {
+    void (async () => {
+      await updateSetting(CONFIG_ENABLED, false);
+      await applyEnabled();
+      log("disabled via tray");
+    })();
+  };
+  pet.onRequestWalkToCenter = (value) => {
+    void (async () => {
+      await updateSetting(CONFIG_WALK_TO_CENTER, value);
+      log(`walkToCenter ${value ? "enabled" : "disabled"} via tray`);
+    })();
+  };
 
   hookSource = path.join(context.extensionPath, "hooks", "kunpet-notify.js");
 
@@ -203,6 +216,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     })
   );
 
+  log(
+    "入口: 命令面板搜索「kunPet」→ 启用/禁用桌宠；设置搜索「kunPet」；托盘右键也可禁用"
+  );
   void applyEnabled();
 }
 

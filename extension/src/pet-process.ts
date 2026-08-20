@@ -22,6 +22,8 @@ export function resolveElectronBinary(petRoot: string): string {
 
 export class PetProcess {
   onMoved?: (x: number, y: number) => void;
+  onRequestDisable?: () => void;
+  onRequestWalkToCenter?: (value: boolean) => void;
 
   private child?: ChildProcess;
   private startPromise?: Promise<void>;
@@ -192,6 +194,7 @@ export class PetProcess {
       x?: unknown;
       y?: unknown;
       ipcPort?: unknown;
+      value?: unknown;
     };
     if (rec.type === "ready") {
       if (typeof rec.ipcPort === "number") {
@@ -203,6 +206,14 @@ export class PetProcess {
     }
     if (rec.type === "moved" && typeof rec.x === "number" && typeof rec.y === "number") {
       this.onMoved?.(rec.x, rec.y);
+      return;
+    }
+    if (rec.type === "request-disable") {
+      this.onRequestDisable?.();
+      return;
+    }
+    if (rec.type === "request-walk-to-center" && typeof rec.value === "boolean") {
+      this.onRequestWalkToCenter?.(rec.value);
     }
   }
 }

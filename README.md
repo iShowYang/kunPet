@@ -81,16 +81,21 @@ Hook 脚本由扩展复制到 `%USERPROFILE%\.cursor\hooks\kunpet-notify.js`（�
 | `beforeSubmitPrompt` | 发送 Agent 消息 | `agent_prompt` |
 | `sessionStart` | 新 Session | `agent_session_start` |
 
-## 设置
+## 设置与入口
 
-Cursor / VS Code 设置中搜索 `kunPet`：
+**怎么找到「启用/禁用」：**
+
+1. **命令面板**（推荐）：`Ctrl+Shift+P` → 输入 `kunPet` → 选「kunPet: 启用桌宠」/「kunPet: 禁用桌宠」
+2. **设置页**：`Ctrl+,` → 搜索 `kunPet` → 勾选 `Enabled` / `Walk To Center`
+3. **系统托盘**（桌宠运行中）：右键托盘鲲图标 →「禁用桌宠」/「开启|关闭走到中间」  
+   - 注意：禁用后托盘会消失；要再启用只能用命令面板或设置页
 
 | 设置 | 默认 | 说明 |
 |------|------|------|
 | `kunpet.enabled` | `true` | 启用桌宠；关闭后不启动进程，Agent 事件仅写 Output |
 | `kunpet.walkToCenter` | `true` | 完成时走到主屏中央；关闭则原地庆祝 |
 
-对应命令：`kunPet: 启用/禁用桌宠`、`kunPet: 开启/关闭走到中间`（与设置双向同步）。
+命令与设置双向同步。F5 调试改过 `package.json` 后若看不到新命令，请 **Reload Window**。
 
 ## 验收清单
 
