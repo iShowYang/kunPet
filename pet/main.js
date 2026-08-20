@@ -19,6 +19,8 @@ let petState = "idle";
 let originPosition = null;
 /** @type {ReturnType<typeof setInterval>|null} */
 let activeTween = null;
+/** @type {boolean} */
+let walkEnabledForCurrentCelebrate = true;
 
 function argNum(name, fallback) {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -116,9 +118,27 @@ function setPetState(next) {
   petState = next;
 }
 
-function beginCelebrate() {
+function celebrateInPlace() {
+  setPetState("celebrate");
+  sendToRenderer("pet:celebrate");
+}
+
+function beginCelebrate(walkToCenter) {
   if (!win) return;
   win.showInactive();
+
+  const shouldWalk = walkToCenter !== false;
+  walkEnabledForCurrentCelebrate = shouldWalk;
+
+  if (!shouldWalk) {
+    cancelTween();
+    if (petState === "walking-to-center" || petState === "walking-back") {
+      sendWalkEnd();
+    }
+    originPosition = getWindowPos();
+    celebrateInPlace();
+    return;
+  }
 
   if (petState === "walking-back") {
     cancelTween();
@@ -128,8 +148,7 @@ function beginCelebrate() {
     setPetState("walking-to-center");
     const center = getPrimaryCenterPos();
     tweenTo(center.x, center.y, () => {
-      setPetState("celebrate");
-      sendToRenderer("pet:celebrate");
+      celebrateInPlace();
     });
     return;
   }
@@ -148,8 +167,7 @@ function beginCelebrate() {
   setPetState("walking-to-center");
   const center = getPrimaryCenterPos();
   tweenTo(center.x, center.y, () => {
-    setPetState("celebrate");
-    sendToRenderer("pet:celebrate");
+    celebrateInPlace();
   });
 }
 
@@ -158,6 +176,13 @@ function beginReturnIdle() {
   if (petState === "idle" || petState === "walking-back") return;
 
   cancelTween();
+
+  if (!walkEnabledForCurrentCelebrate) {
+    originPosition = null;
+    setPetState("idle");
+    sendWalkEnd();
+    return;
+  }
 
   const target = originPosition ?? getWindowPos();
   setPetState("walking-back");
@@ -209,7 +234,7 @@ function handleMessage(msg) {
   if (!win) return;
   switch (msg.type) {
     case "celebrate":
-      beginCelebrate();
+      beginCelebrate(msg.walkToCenter !== false);
       break;
     case "return-idle":
       beginReturnIdle();
