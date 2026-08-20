@@ -14,8 +14,10 @@
       { "command": "kunpet.hide", "title": "隐藏桌宠", "category": "kunPet" },
       { "command": "kunpet.enable", "title": "启用桌宠", "category": "kunPet" },
       { "command": "kunpet.disable", "title": "禁用桌宠", "category": "kunPet" },
+      { "command": "kunpet.toggleWalkToCenter", "title": "切换走到中间", "category": "kunPet" },
       { "command": "kunpet.enableWalkToCenter", "title": "开启走到中间", "category": "kunPet" },
       { "command": "kunpet.disableWalkToCenter", "title": "关闭走到中间", "category": "kunPet" },
+      { "command": "kunpet.openSettings", "title": "打开设置", "category": "kunPet" },
       { "command": "kunpet.testCelebrate", "title": "测试完成提醒", "category": "kunPet" },
       { "command": "kunpet.reregisterHook", "title": "重新注册 Hook", "category": "kunPet" }
     ],
@@ -25,12 +27,12 @@
         "kunpet.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "启用桌宠。关闭后不启动桌宠进程；Agent 事件仅写入 Output 日志。"
+          "markdownDescription": "启用桌宠。关闭后不启动桌宠进程；Agent 事件仅写入 Output 日志。"
         },
         "kunpet.walkToCenter": {
           "type": "boolean",
           "default": true,
-          "description": "Agent 完成时走到主屏中央再庆祝。关闭后在当前位置原地庆祝。"
+          "markdownDescription": "走到中间：Agent 完成时走到主屏中央再庆祝。关闭后在当前位置原地庆祝。"
         }
       }
     }

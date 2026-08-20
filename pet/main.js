@@ -21,6 +21,8 @@ let originPosition = null;
 let activeTween = null;
 /** @type {boolean} */
 let walkEnabledForCurrentCelebrate = true;
+/** @type {boolean} */
+let prefsWalkToCenter = true;
 
 function argNum(name, fallback) {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -251,6 +253,12 @@ function handleMessage(msg) {
         win.setPosition(msg.x, msg.y);
       }
       break;
+    case "set-prefs":
+      if (typeof msg.walkToCenter === "boolean") {
+        prefsWalkToCenter = msg.walkToCenter;
+        rebuildTrayMenu();
+      }
+      break;
   }
 }
 
@@ -327,30 +335,40 @@ function emitToExtension(msg) {
   process.stdout.write(JSON.stringify(msg) + "\n");
 }
 
-function setupTray() {
-  const img = loadTrayIcon();
-  tray = new Tray(img);
-  tray.setToolTip("kunPet");
+function rebuildTrayMenu() {
+  if (!tray) return;
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: "显示", click: () => win?.showInactive() },
       { label: "隐藏", click: () => win?.hide() },
       { type: "separator" },
       {
-        label: "开启走到中间",
-        click: () => emitToExtension({ type: "request-walk-to-center", value: true }),
-      },
-      {
-        label: "关闭走到中间",
-        click: () => emitToExtension({ type: "request-walk-to-center", value: false }),
+        label: "走到中间",
+        type: "checkbox",
+        checked: prefsWalkToCenter,
+        click: (item) => {
+          prefsWalkToCenter = item.checked;
+          emitToExtension({ type: "request-walk-to-center", value: item.checked });
+        },
       },
       { type: "separator" },
       {
         label: "禁用桌宠",
         click: () => emitToExtension({ type: "request-disable" }),
       },
+      {
+        label: "打开设置…",
+        click: () => emitToExtension({ type: "request-open-settings" }),
+      },
     ])
   );
+}
+
+function setupTray() {
+  const img = loadTrayIcon();
+  tray = new Tray(img);
+  tray.setToolTip("kunPet");
+  rebuildTrayMenu();
 }
 
 app.whenReady().then(async () => {

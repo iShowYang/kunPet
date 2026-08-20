@@ -24,6 +24,7 @@ export class PetProcess {
   onMoved?: (x: number, y: number) => void;
   onRequestDisable?: () => void;
   onRequestWalkToCenter?: (value: boolean) => void;
+  onRequestOpenSettings?: () => void;
 
   private child?: ChildProcess;
   private startPromise?: Promise<void>;
@@ -214,6 +215,10 @@ export class PetProcess {
     }
     if (rec.type === "request-walk-to-center" && typeof rec.value === "boolean") {
       this.onRequestWalkToCenter?.(rec.value);
+      return;
+    }
+    if (rec.type === "request-open-settings") {
+      this.onRequestOpenSettings?.();
     }
   }
 }

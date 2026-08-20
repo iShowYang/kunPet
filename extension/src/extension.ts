@@ -60,7 +60,7 @@ async function startPetIfNeeded(): Promise<void> {
 }
 
 async function applyEnabled(): Promise<void> {
-  const { enabled } = currentSettings();
+  const { enabled, walkToCenter } = currentSettings();
   if (!enabled) {
     pet?.stop();
     log("pet disabled; process stopped");
@@ -68,9 +68,16 @@ async function applyEnabled(): Promise<void> {
   }
   try {
     await startPetIfNeeded();
+    pet?.send({ type: "set-prefs", walkToCenter });
   } catch (err) {
     log(`failed to start pet: ${err instanceof Error ? err.message : String(err)}`);
   }
+}
+
+function syncPrefsToPet(): void {
+  if (!currentSettings().enabled) return;
+  const { walkToCenter } = currentSettings();
+  pet?.send({ type: "set-prefs", walkToCenter });
 }
 
 function handleStop(): void {
@@ -115,8 +122,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   pet.onRequestWalkToCenter = (value) => {
     void (async () => {
       await updateSetting(CONFIG_WALK_TO_CENTER, value);
+      syncPrefsToPet();
       log(`walkToCenter ${value ? "enabled" : "disabled"} via tray`);
     })();
+  };
+  pet.onRequestOpenSettings = () => {
+    void vscode.commands.executeCommand("kunpet.openSettings");
   };
 
   hookSource = path.join(context.extensionPath, "hooks", "kunpet-notify.js");
@@ -173,15 +184,31 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
     vscode.commands.registerCommand("kunpet.enableWalkToCenter", async () => {
       await updateSetting(CONFIG_WALK_TO_CENTER, true);
+      syncPrefsToPet();
       log("walkToCenter enabled");
     }),
     vscode.commands.registerCommand("kunpet.disableWalkToCenter", async () => {
       await updateSetting(CONFIG_WALK_TO_CENTER, false);
+      syncPrefsToPet();
       log("walkToCenter disabled");
+    }),
+    vscode.commands.registerCommand("kunpet.toggleWalkToCenter", async () => {
+      const next = !currentSettings().walkToCenter;
+      await updateSetting(CONFIG_WALK_TO_CENTER, next);
+      syncPrefsToPet();
+      log(`walkToCenter ${next ? "enabled" : "disabled"}`);
+      void vscode.window.setStatusBarMessage(
+        next ? "kunPet: 已开启走到中间" : "kunPet: 已关闭走到中间（原地庆祝）",
+        2500
+      );
+    }),
+    vscode.commands.registerCommand("kunpet.openSettings", async () => {
+      await vscode.commands.executeCommand("workbench.action.openSettings", "kunPet");
     }),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (!e.affectsConfiguration(CONFIG_SECTION)) return;
       void applyEnabled();
+      syncPrefsToPet();
     }),
     vscode.commands.registerCommand("kunpet.reregisterHook", async () => {
       if (eventPort === undefined || !hookSource) {
@@ -217,7 +244,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   log(
-    "入口: 命令面板搜索「kunPet」→ 启用/禁用桌宠；设置搜索「kunPet」；托盘右键也可禁用"
+    "入口: Ctrl+Shift+P 搜「kunPet」→ 切换走到中间 / 启用禁用 / 打开设置；托盘可勾选「走到中间」"
   );
   void applyEnabled();
 }

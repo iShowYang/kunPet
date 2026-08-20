@@ -22,7 +22,8 @@ export type PetIpcMessage =
   | { type: "return-idle" }
   | { type: "show" }
   | { type: "hide" }
-  | { type: "set-position"; x: number; y: number };
+  | { type: "set-position"; x: number; y: number }
+  | { type: "set-prefs"; walkToCenter: boolean };
 
 export const CONFIG_SECTION = "kunpet";
 export const CONFIG_ENABLED = "enabled";
