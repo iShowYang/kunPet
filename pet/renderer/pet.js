@@ -65,6 +65,16 @@ function enterCelebrate() {
   showBubble(pickCelebrateMessage());
 }
 
+function forceIdle() {
+  exitWalking();
+  pet.classList.remove("celebrate");
+  bubble.hidden = true;
+  bubble.classList.remove("is-visible");
+  pet.classList.add("idle");
+  document.body.style.webkitAppRegion = "drag";
+  startIdleCycle();
+}
+
 window.kunpet.onWalkStart(({ direction }) => {
   enterWalking(direction);
 });
@@ -80,6 +90,10 @@ window.kunpet.onWalkEnd(() => {
 
 window.kunpet.onCelebrate(() => {
   enterCelebrate();
+});
+
+window.kunpet.onIdle(() => {
+  forceIdle();
 });
 
 pet.addEventListener("click", () => {

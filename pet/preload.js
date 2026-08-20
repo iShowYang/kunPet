@@ -4,5 +4,6 @@ contextBridge.exposeInMainWorld("kunpet", {
   onWalkStart: (cb) =>
     ipcRenderer.on("pet:walk-start", (_e, payload) => cb(payload)),
   onWalkEnd: (cb) => ipcRenderer.on("pet:walk-end", () => cb()),
+  onIdle: (cb) => ipcRenderer.on("pet:idle", () => cb()),
   dismissCelebrate: () => ipcRenderer.send("pet:dismiss-celebrate"),
 });

@@ -181,6 +181,7 @@ function beginReturnIdle() {
     originPosition = null;
     setPetState("idle");
     sendWalkEnd();
+    sendToRenderer("pet:idle");
     return;
   }
 
