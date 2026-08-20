@@ -49,7 +49,7 @@ describe("startEventServer agent_start", () => {
     }
   });
 
-  it("still accepts agent_stop with separate 2s dedupe bucket", async () => {
+  it("still accepts agent_stop with a separate dedupe bucket from agent_start", async () => {
     let stopCount = 0;
     let startCount = 0;
     const server = await startEventServer({

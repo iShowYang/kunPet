@@ -15,6 +15,8 @@ let tray;
 let trayMenu = null;
 let rendererReady = false;
 const pendingRendererEvents = [];
+/** Kept so the HTTP IPC server is not GC'd. */
+let ipcServer = null;
 
 /** @type {"idle"|"working"|"walking-to-center"|"celebrate"|"walking-back"} */
 let petState = "idle";
@@ -221,12 +223,21 @@ function beginCelebrate(walkToCenter) {
   });
 }
 
-function beginReturnIdle() {
+function beginReturnIdle(force = false) {
   if (!win) return;
   if (petState === "idle") return;
   if (petState === "walking-back") return;
-  // 对话中（working）：sessionStart 的 return-idle 不应把插兜打回待机
-  if (petState === "working") return;
+  // 对话中（working）：普通 return-idle 不打断插兜；force 用于 stop 丢失后的解卡
+  if (petState === "working") {
+    if (!force) return;
+    pendingHomePose = null;
+    originPosition = null;
+    activeWalkStyle = null;
+    cancelTween();
+    setPetState("idle");
+    sendToRenderer("pet:idle");
+    return;
+  }
 
   cancelTween();
 
@@ -288,7 +299,7 @@ function handleMessage(msg) {
       break;
     case "return-idle":
       pendingHomePose = "idle";
-      beginReturnIdle();
+      beginReturnIdle(msg.force === true);
       break;
     case "working":
       beginWorking();
@@ -335,6 +346,13 @@ function startIpcServer() {
             res.writeHead(200).end("ok");
           } catch (_) {
             res.writeHead(400).end("bad request");
+          }
+        });
+        req.on("error", () => {
+          try {
+            res.writeHead(400).end("bad request");
+          } catch (_) {
+            /* ignore */
           }
         });
         return;
@@ -435,7 +453,8 @@ function setupTray() {
 
 app.whenReady().then(async () => {
   setupRendererIpc();
-  const { port } = await startIpcServer();
+  const { server, port } = await startIpcServer();
+  ipcServer = server;
   createWindow();
   setupTray();
   process.stdout.write(JSON.stringify({ type: "ready", ipcPort: port }) + "\n");

@@ -3,6 +3,7 @@ import path from "node:path";
 import * as vscode from "vscode";
 import { startEventServer } from "./event-server";
 import { cleanupKunPetHook, ensureKunPetHook } from "./hook-manager";
+import { resolveSessionStartMessage } from "./ipc-resilience";
 import { cleanupElectronRuntimeAt } from "./runtime-cleanup";
 import { PetProcess } from "./pet-process";
 import { readKunPetSettings } from "./settings";
@@ -20,6 +21,9 @@ let closeServer: (() => Promise<void>) | undefined;
 let eventPort: number | undefined;
 let hookSource: string | undefined;
 let extensionContext: vscode.ExtensionContext | undefined;
+/** True after agent_prompt until celebrate/stop or forced idle. */
+let awaitingCelebrate = false;
+let restartingPet = false;
 
 export function resolvePetRoot(extensionPath: string): string {
   const bundled = path.join(extensionPath, "pet");
@@ -59,10 +63,28 @@ async function startPetIfNeeded(): Promise<void> {
   log("pet process started");
 }
 
+async function restartPetAfterIpcFailure(): Promise<void> {
+  if (restartingPet || !pet || !currentSettings().enabled) return;
+  restartingPet = true;
+  try {
+    log("restarting pet process after IPC failures");
+    pet.stop();
+    await startPetIfNeeded();
+    syncPrefsToPet();
+  } catch (err) {
+    log(
+      `failed to restart pet: ${err instanceof Error ? err.message : String(err)}`
+    );
+  } finally {
+    restartingPet = false;
+  }
+}
+
 async function applyEnabled(): Promise<void> {
   const { enabled, walkToCenter } = currentSettings();
   if (!enabled) {
     pet?.stop();
+    awaitingCelebrate = false;
     log("pet disabled; process stopped");
     return;
   }
@@ -86,6 +108,7 @@ function handleStop(): void {
     log("[disabled] agent_stop received, pet not running");
     return;
   }
+  awaitingCelebrate = false;
   pet?.send({ type: "celebrate", walkToCenter });
 }
 
@@ -96,12 +119,18 @@ function handleAgentStart(e: { type: string }): void {
     return;
   }
   // 仅 beforeSubmitPrompt：进入对话 → 插兜 wink
-  // sessionStart：只解除庆祝回到待机，避免完成后被再次拉成 wink 且卡住庆祝
+  // sessionStart：解除庆祝；若 stop 丢失则 force 解卡回待机
   if (e.type === "agent_prompt") {
+    awaitingCelebrate = true;
     pet?.send({ type: "working" });
     return;
   }
-  pet?.send({ type: "return-idle" });
+  const msg = resolveSessionStartMessage({ awaitingCelebrate });
+  if (msg.force) {
+    log("sessionStart force return-idle (celebrate was still awaiting)");
+    awaitingCelebrate = false;
+  }
+  pet?.send(msg);
 }
 
 function log(message: string): void {
@@ -115,6 +144,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   log("activating kunPet");
 
   pet = new PetProcess({ log: (m) => channel?.appendLine(m) });
+  pet.onIpcBroken = () => {
+    void restartPetAfterIpcFailure();
+  };
   pet.onMoved = (x, y) => {
     void context.globalState.update(POSITION_KEY, { x, y });
   };

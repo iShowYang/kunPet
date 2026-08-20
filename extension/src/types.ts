@@ -19,7 +19,7 @@ export type AgentEvent = AgentStopEvent | AgentStartEvent;
 
 export type PetIpcMessage =
   | { type: "celebrate"; walkToCenter?: boolean }
-  | { type: "return-idle" }
+  | { type: "return-idle"; force?: boolean }
   | { type: "working" }
   | { type: "show" }
   | { type: "hide" }
@@ -37,7 +37,8 @@ export type PortFileContents = {
 
 export const PORT_FILE_NAME = "kunpet-port.json";
 export const HOOK_SCRIPT_NAME = "kunpet-notify.js";
-export const DEDUPE_WINDOW_MS = 2000;
+/** Guard against duplicate stop hooks for the same turn; keep short so rapid turns still celebrate. */
+export const DEDUPE_WINDOW_MS = 400;
 export const AGENT_START_DEDUPE_MS = 500;
 export const DEFAULT_NOTIFY_TITLE = "鲲来报喜";
 export const DEFAULT_NOTIFY_BODY = "这轮 AI 对话完成啦";

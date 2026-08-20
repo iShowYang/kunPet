@@ -5,6 +5,14 @@ import path from "node:path";
 import readline from "node:readline";
 import type { PetIpcMessage } from "./types";
 import { ensureElectronRuntime } from "./electron-runtime";
+import {
+  formatIpcErrorLog,
+  IPC_FAILURES_BEFORE_RESTART,
+  IPC_MAX_ATTEMPTS,
+  IPC_TIMEOUT_MS,
+  nextIpcFailureCount,
+  shouldRestartPet,
+} from "./ipc-resilience";
 
 export function serializeIpc(msg: PetIpcMessage): string {
   return JSON.stringify(msg) + "\n";
@@ -20,11 +28,20 @@ export function resolveElectronBinary(petRoot: string): string {
   return exe;
 }
 
+export type PetStartOpts = {
+  petRoot: string;
+  runtimeDir: string;
+  x?: number;
+  y?: number;
+};
+
 export class PetProcess {
   onMoved?: (x: number, y: number) => void;
   onRequestDisable?: () => void;
   onRequestWalkToCenter?: (value: boolean) => void;
   onRequestOpenSettings?: () => void;
+  /** Fired when IPC keeps failing; extension should stop+start the pet. */
+  onIpcBroken?: () => void;
 
   private child?: ChildProcess;
   private startPromise?: Promise<void>;
@@ -32,19 +49,19 @@ export class PetProcess {
   private ipcPort?: number;
   private pendingMessages: PetIpcMessage[] = [];
   private readonly log?: (line: string) => void;
+  private consecutiveIpcFailures = 0;
+  private restartRequested = false;
 
   constructor(opts?: { log?: (line: string) => void }) {
     this.log = opts?.log;
   }
 
-  async start(opts: {
-    petRoot: string;
-    runtimeDir: string;
-    x?: number;
-    y?: number;
-  }): Promise<void> {
+  async start(opts: PetStartOpts): Promise<void> {
     if (this.child) return;
     if (this.startPromise) return this.startPromise;
+
+    this.restartRequested = false;
+    this.consecutiveIpcFailures = 0;
 
     this.startPromise = this.startInternal(opts).finally(() => {
       this.startPromise = undefined;
@@ -52,12 +69,7 @@ export class PetProcess {
     return this.startPromise;
   }
 
-  private async startInternal(opts: {
-    petRoot: string;
-    runtimeDir: string;
-    x?: number;
-    y?: number;
-  }): Promise<void> {
+  private async startInternal(opts: PetStartOpts): Promise<void> {
     const electron = await ensureElectronRuntime({
       petRoot: opts.petRoot,
       runtimeDir: opts.runtimeDir,
@@ -132,11 +144,15 @@ export class PetProcess {
       this.pendingMessages.push(msg);
       return;
     }
-    this.postIpc(msg);
+    void this.deliver(msg);
   }
 
   stop(): void {
-    if (!this.child) return;
+    if (!this.child) {
+      this.ipcPort = undefined;
+      this.pendingMessages = [];
+      return;
+    }
     this.stopping = true;
     this.ipcPort = undefined;
     this.pendingMessages = [];
@@ -148,38 +164,89 @@ export class PetProcess {
   private flushPendingMessages(): void {
     const queued = this.pendingMessages.splice(0);
     for (const msg of queued) {
-      this.postIpc(msg);
+      void this.deliver(msg);
     }
   }
 
-  private postIpc(msg: PetIpcMessage): void {
-    if (!this.ipcPort) return;
+  private postIpcOnce(msg: PetIpcMessage, port: number): Promise<void> {
     const body = JSON.stringify(msg);
-    const req = http.request(
-      {
-        host: "127.0.0.1",
-        port: this.ipcPort,
-        path: "/ipc",
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(body),
+    return new Promise((resolve, reject) => {
+      const req = http.request(
+        {
+          host: "127.0.0.1",
+          port,
+          path: "/ipc",
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Content-Length": Buffer.byteLength(body),
+          },
+          timeout: IPC_TIMEOUT_MS,
         },
-        timeout: 1000,
-      },
-      (res) => {
-        res.resume();
+        (res) => {
+          res.resume();
+          res.on("end", () => {
+            if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+              resolve();
+            } else {
+              reject(new Error(`HTTP ${res.statusCode ?? "??"}`));
+            }
+          });
+        }
+      );
+      req.on("error", (err) => {
+        reject(err);
+      });
+      req.on("timeout", () => {
+        req.destroy();
+        reject(new Error("timed out"));
+      });
+      req.write(body);
+      req.end();
+    });
+  }
+
+  private async deliver(msg: PetIpcMessage): Promise<void> {
+    let lastErr: Error | undefined;
+    for (let attempt = 1; attempt <= IPC_MAX_ATTEMPTS; attempt++) {
+      const port = this.ipcPort;
+      if (!port) {
+        this.pendingMessages.push(msg);
+        return;
       }
+      try {
+        await this.postIpcOnce(msg, port);
+        this.consecutiveIpcFailures = nextIpcFailureCount(
+          this.consecutiveIpcFailures,
+          true
+        );
+        return;
+      } catch (err) {
+        lastErr = err instanceof Error ? err : new Error(String(err));
+        this.log?.(
+          formatIpcErrorLog({
+            type: msg.type,
+            port,
+            reason: `${lastErr.message} (attempt ${attempt}/${IPC_MAX_ATTEMPTS})`,
+          })
+        );
+      }
+    }
+
+    this.consecutiveIpcFailures = nextIpcFailureCount(
+      this.consecutiveIpcFailures,
+      false
     );
-    req.on("error", (err) => {
-      this.log?.(`pet IPC failed: ${err.message}`);
-    });
-    req.on("timeout", () => {
-      req.destroy();
-      this.log?.("pet IPC timed out");
-    });
-    req.write(body);
-    req.end();
+    if (
+      !this.restartRequested &&
+      shouldRestartPet(this.consecutiveIpcFailures, IPC_FAILURES_BEFORE_RESTART)
+    ) {
+      this.restartRequested = true;
+      this.log?.(
+        `pet IPC broken after ${this.consecutiveIpcFailures} consecutive failures; requesting restart`
+      );
+      this.onIpcBroken?.();
+    }
   }
 
   private handleStdoutLine(line: string, onReady: () => void): void {
@@ -200,6 +267,8 @@ export class PetProcess {
     if (rec.type === "ready") {
       if (typeof rec.ipcPort === "number") {
         this.ipcPort = rec.ipcPort;
+        this.consecutiveIpcFailures = 0;
+        this.restartRequested = false;
         this.flushPendingMessages();
       }
       onReady();
