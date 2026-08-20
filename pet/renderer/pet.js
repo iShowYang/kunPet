@@ -34,6 +34,7 @@ function enterIdle() {
   pet.classList.add("idle");
   document.body.style.webkitAppRegion = "drag";
   img.classList.remove("face-left");
+  img.style.transform = "";
   img.src = REST_SRC;
   hideBubble();
 }
@@ -43,6 +44,7 @@ function enterWorking() {
   pet.classList.add("working");
   document.body.style.webkitAppRegion = "drag";
   img.classList.remove("face-left");
+  img.style.transform = "";
   img.src = WORKING_SRC;
   hideBubble();
 }
@@ -51,14 +53,22 @@ function enterWalking(direction) {
   pet.classList.remove("idle", "celebrate", "working");
   pet.classList.add("walking");
   document.body.style.webkitAppRegion = "no-drag";
-  // 走动时用插兜图，更有「在动」感
   img.src = WORKING_SRC;
   img.classList.toggle("face-left", direction === "left");
+  img.style.transform = "";
 }
 
 function exitWalking() {
   pet.classList.remove("walking");
   img.classList.remove("face-left");
+  img.style.transform = "";
+}
+
+function applyWalkFrame({ scale, rotate }) {
+  const s = typeof scale === "number" ? scale : 1;
+  const r = typeof rotate === "number" ? rotate : 0;
+  const face = img.classList.contains("face-left") ? " scaleX(-1)" : "";
+  img.style.transform = `scale(${s}) rotate(${r}deg)${face}`;
 }
 
 function enterCelebrate() {
@@ -66,6 +76,7 @@ function enterCelebrate() {
   pet.classList.remove("idle", "working");
   pet.classList.add("celebrate");
   document.body.style.webkitAppRegion = "no-drag";
+  img.style.transform = "";
   img.src = CELEBRATE_SRC;
   showBubble(pickCelebrateMessage());
 }
@@ -74,9 +85,13 @@ window.kunpet.onWalkStart(({ direction }) => {
   enterWalking(direction);
 });
 
+window.kunpet.onWalkFrame((payload) => {
+  if (!pet.classList.contains("walking")) return;
+  applyWalkFrame(payload || {});
+});
+
 window.kunpet.onWalkEnd(() => {
   exitWalking();
-  // 最终姿势由随后的 pet:idle / pet:working 决定；celebrate 保持不动
 });
 
 window.kunpet.onCelebrate(() => {

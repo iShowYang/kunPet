@@ -4,9 +4,13 @@ import {
   computePrimaryCenter,
   computeTweenDurationMs,
   lerp,
+  pickWalkStyleId,
+  sampleWalkPose,
   walkDirection,
+  WALK_STYLE_IDS,
   WIN_HEIGHT,
   WIN_WIDTH,
+  type WalkStyleId,
 } from "../tween-math";
 
 describe("computeTweenDurationMs", () => {
@@ -42,5 +46,49 @@ describe("walkDirection", () => {
   });
   it("faces left when moving left", () => {
     assert.equal(walkDirection(100, 0), "left");
+  });
+});
+
+describe("pickWalkStyleId", () => {
+  it("returns one of the four style ids", () => {
+    for (let i = 0; i < 20; i++) {
+      const id = pickWalkStyleId(() => i / 20);
+      assert.ok((WALK_STYLE_IDS as readonly string[]).includes(id));
+    }
+  });
+});
+
+describe("sampleWalkPose", () => {
+  const from = { x: 0, y: 100 };
+  const to = { x: 400, y: 200 };
+
+  for (const styleId of WALK_STYLE_IDS) {
+    it(`${styleId} endpoints match from/to`, () => {
+      const a = sampleWalkPose(styleId, from, to, 0);
+      const b = sampleWalkPose(styleId, from, to, 1);
+      assert.equal(Math.round(a.x), from.x);
+      assert.equal(Math.round(a.y), from.y);
+      assert.equal(a.scale, 1);
+      assert.equal(Math.round(b.x), to.x);
+      assert.equal(Math.round(b.y), to.y);
+      assert.equal(b.scale, 1);
+    });
+  }
+
+  it("dash peaks scale above 1 near the end", () => {
+    const mid = sampleWalkPose("dash", from, to, 0.925);
+    assert.ok(mid.scale > 1);
+  });
+
+  it("arc lifts above the linear chord at mid", () => {
+    const mid = sampleWalkPose("arc", from, to, 0.5);
+    const linearY = lerp(from.y, to.y, 0.5);
+    assert.ok(mid.y < linearY);
+  });
+
+  it("hop lifts above the linear chord mid-hop", () => {
+    const mid = sampleWalkPose("hop" as WalkStyleId, from, to, 0.5 / 3);
+    const linearY = lerp(from.y, to.y, 0.5 / 3);
+    assert.ok(mid.y < linearY);
   });
 });

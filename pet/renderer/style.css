@@ -149,11 +149,12 @@ body {
 }
 
 #pet.walking img {
-  animation: breathe 2.5s ease-in-out infinite;
+  animation: none;
+  transform-origin: center bottom;
 }
 
 #pet.walking img.face-left {
-  transform: scaleX(-1);
+  /* face flip combined in JS transform with scale */
 }
 
 #pet.celebrate {

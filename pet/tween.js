@@ -5,6 +5,8 @@ const MIN_DURATION_MS = 400;
 const MAX_DURATION_MS = 1800;
 const SPEED_PX_PER_S = 400;
 
+const WALK_STYLE_IDS = ["straight", "arc", "hop", "dash"];
+
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }
@@ -36,11 +38,87 @@ function walkDirection(fromX, toX) {
   return toX >= fromX ? "right" : "left";
 }
 
+function pickWalkStyleId(random) {
+  const rnd = typeof random === "function" ? random : Math.random;
+  const i = Math.floor(rnd() * WALK_STYLE_IDS.length) % WALK_STYLE_IDS.length;
+  return WALK_STYLE_IDS[i];
+}
+
+function easeOutCubic(t) {
+  return 1 - Math.pow(1 - t, 3);
+}
+
+function easeOutQuad(t) {
+  return 1 - (1 - t) * (1 - t);
+}
+
+function sampleStraight(from, to, t) {
+  const u = easeOutCubic(clamp(t, 0, 1));
+  return {
+    x: lerp(from.x, to.x, u),
+    y: lerp(from.y, to.y, u),
+    scale: 1,
+    rotate: 0,
+  };
+}
+
+function sampleArc(from, to, t) {
+  const u = clamp(t, 0, 1);
+  const eased = easeOutCubic(u);
+  const x = lerp(from.x, to.x, eased);
+  const yBase = lerp(from.y, to.y, eased);
+  const d = distance(from.x, from.y, to.x, to.y);
+  const lift = Math.min(80, Math.max(24, d * 0.12));
+  const y = yBase - lift * 4 * u * (1 - u);
+  return { x, y, scale: 1, rotate: 0 };
+}
+
+function sampleHop(from, to, t) {
+  const u = clamp(t, 0, 1);
+  const eased = easeOutCubic(u);
+  const x = lerp(from.x, to.x, eased);
+  const yBase = lerp(from.y, to.y, eased);
+  const hops = 3;
+  const hopAmp = 28;
+  const hop = Math.abs(Math.sin(u * Math.PI * hops)) * hopAmp * (1 - u * 0.35);
+  return { x, y: yBase - hop, scale: 1, rotate: 0 };
+}
+
+function sampleDash(from, to, t) {
+  const u = clamp(t, 0, 1);
+  const eased = easeOutQuad(u);
+  const x = lerp(from.x, to.x, eased);
+  const y = lerp(from.y, to.y, eased);
+  let scale = 1;
+  if (u >= 0.85) {
+    const local = (u - 0.85) / 0.15;
+    scale = local < 0.5 ? lerp(1, 1.08, local * 2) : lerp(1.08, 1, (local - 0.5) * 2);
+  }
+  return { x, y, scale, rotate: 0 };
+}
+
+function sampleWalkPose(styleId, from, to, t) {
+  switch (styleId) {
+    case "arc":
+      return sampleArc(from, to, t);
+    case "hop":
+      return sampleHop(from, to, t);
+    case "dash":
+      return sampleDash(from, to, t);
+    case "straight":
+    default:
+      return sampleStraight(from, to, t);
+  }
+}
+
 module.exports = {
   WIN_WIDTH,
   WIN_HEIGHT,
+  WALK_STYLE_IDS,
   lerp,
   computeTweenDurationMs,
   computePrimaryCenter,
   walkDirection,
+  pickWalkStyleId,
+  sampleWalkPose,
 };

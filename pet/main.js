@@ -2,10 +2,11 @@ const { app, BrowserWindow, Tray, Menu, nativeImage, screen, ipcMain } = require
 const http = require("http");
 const path = require("path");
 const {
-  lerp,
   computeTweenDurationMs,
   computePrimaryCenter,
   walkDirection,
+  pickWalkStyleId,
+  sampleWalkPose,
 } = require("./tween");
 
 let win;
@@ -25,6 +26,8 @@ let walkEnabledForCurrentCelebrate = true;
 let prefsWalkToCenter = true;
 /** @type {"idle"|"working"|null} */
 let pendingHomePose = null;
+/** @type {"straight"|"arc"|"hop"|"dash"|null} */
+let activeWalkStyle = null;
 
 function argNum(name, fallback) {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -77,24 +80,27 @@ function sendWalkStart(direction) {
 }
 
 function sendWalkEnd() {
+  sendToRenderer("pet:walk-frame", { scale: 1, rotate: 0 });
   sendToRenderer("pet:walk-end");
 }
 
-function tweenTo(targetX, targetY, onDone) {
+function tweenWithStyle(styleId, targetX, targetY, onDone) {
   cancelTween();
   if (!win || win.isDestroyed()) return;
 
-  const { x: fromX, y: fromY } = getWindowPos();
-  const durationMs = computeTweenDurationMs(fromX, fromY, targetX, targetY);
-  sendWalkStart(walkDirection(fromX, targetX));
+  const from = getWindowPos();
+  const to = { x: targetX, y: targetY };
+  const durationMs = computeTweenDurationMs(from.x, from.y, to.x, to.y);
+  sendWalkStart(walkDirection(from.x, to.x));
 
   if (durationMs === 0) {
-    win.setPosition(targetX, targetY);
+    win.setPosition(to.x, to.y);
     sendWalkEnd();
     onDone();
     return;
   }
 
+  const style = styleId || "straight";
   const started = Date.now();
   activeTween = setInterval(() => {
     if (!win || win.isDestroyed()) {
@@ -102,11 +108,12 @@ function tweenTo(targetX, targetY, onDone) {
       return;
     }
     const t = Math.min(1, (Date.now() - started) / durationMs);
-    const x = Math.round(lerp(fromX, targetX, t));
-    const y = Math.round(lerp(fromY, targetY, t));
-    win.setPosition(x, y);
+    const pose = sampleWalkPose(style, from, to, t);
+    win.setPosition(Math.round(pose.x), Math.round(pose.y));
+    sendToRenderer("pet:walk-frame", { scale: pose.scale, rotate: pose.rotate });
     if (t >= 1) {
       cancelTween();
+      win.setPosition(to.x, to.y);
       sendWalkEnd();
       onDone();
     }
@@ -130,6 +137,7 @@ function celebrateInPlace() {
 
 function finishAtHome() {
   originPosition = null;
+  activeWalkStyle = null;
   const pose = pendingHomePose || "idle";
   pendingHomePose = null;
   setPetState(pose);
@@ -175,10 +183,13 @@ function beginCelebrate(walkToCenter) {
     if (petState === "walking-to-center" || petState === "walking-back") {
       sendWalkEnd();
     }
+    activeWalkStyle = null;
     originPosition = getWindowPos();
     celebrateInPlace();
     return;
   }
+
+  activeWalkStyle = pickWalkStyleId();
 
   if (petState === "walking-back") {
     cancelTween();
@@ -187,7 +198,7 @@ function beginCelebrate(walkToCenter) {
     originPosition = { x: pos.x, y: pos.y };
     setPetState("walking-to-center");
     const center = getPrimaryCenterPos();
-    tweenTo(center.x, center.y, () => {
+    tweenWithStyle(activeWalkStyle, center.x, center.y, () => {
       celebrateInPlace();
     });
     return;
@@ -206,7 +217,7 @@ function beginCelebrate(walkToCenter) {
   originPosition = { x: pos.x, y: pos.y };
   setPetState("walking-to-center");
   const center = getPrimaryCenterPos();
-  tweenTo(center.x, center.y, () => {
+  tweenWithStyle(activeWalkStyle, center.x, center.y, () => {
     celebrateInPlace();
   });
 }
@@ -218,6 +229,7 @@ function beginReturnIdle() {
 
   if (petState === "working") {
     pendingHomePose = null;
+    activeWalkStyle = null;
     setPetState("idle");
     sendToRenderer("pet:idle");
     return;
@@ -231,8 +243,9 @@ function beginReturnIdle() {
   }
 
   const target = originPosition ?? getWindowPos();
+  const style = activeWalkStyle || "straight";
   setPetState("walking-back");
-  tweenTo(target.x, target.y, () => {
+  tweenWithStyle(style, target.x, target.y, () => {
     finishAtHome();
   });
 }
