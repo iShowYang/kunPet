@@ -18,11 +18,15 @@ export type AgentStartEvent = AgentPromptEvent | AgentSessionStartEvent;
 export type AgentEvent = AgentStopEvent | AgentStartEvent;
 
 export type PetIpcMessage =
-  | { type: "celebrate" }
+  | { type: "celebrate"; walkToCenter?: boolean }
   | { type: "return-idle" }
   | { type: "show" }
   | { type: "hide" }
   | { type: "set-position"; x: number; y: number };
+
+export const CONFIG_SECTION = "kunpet";
+export const CONFIG_ENABLED = "enabled";
+export const CONFIG_WALK_TO_CENTER = "walkToCenter";
 
 export type PortFileContents = {
   port: number;

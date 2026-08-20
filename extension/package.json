@@ -1,0 +1,53 @@
+{
+  "name": "kunpet",
+  "displayName": "kunPet",
+  "description": "鲲桌宠：Agent 本轮结束时庆祝并通知",
+  "version": "0.1.0",
+  "publisher": "kunpet",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "kunpet.show", "title": "kunPet: 显示桌宠" },
+      { "command": "kunpet.hide", "title": "kunPet: 隐藏桌宠" },
+      { "command": "kunpet.enable", "title": "kunPet: 启用桌宠" },
+      { "command": "kunpet.disable", "title": "kunPet: 禁用桌宠" },
+      { "command": "kunpet.enableWalkToCenter", "title": "kunPet: 开启走到中间" },
+      { "command": "kunpet.disableWalkToCenter", "title": "kunPet: 关闭走到中间" },
+      { "command": "kunpet.testCelebrate", "title": "kunPet: 测试完成提醒" },
+      { "command": "kunpet.reregisterHook", "title": "kunPet: 重新注册 Hook" }
+    ],
+    "configuration": {
+      "title": "kunPet",
+      "properties": {
+        "kunpet.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "启用桌宠。关闭后不启动桌宠进程；Agent 事件仅写入 Output 日志。"
+        },
+        "kunpet.walkToCenter": {
+          "type": "boolean",
+          "default": true,
+          "description": "Agent 完成时走到主屏中央再庆祝。关闭后在当前位置原地庆祝。"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "node --import tsx --test src/test/**/*.test.ts",
+    "vscode:prepublish": "npm run compile",
+    "vscode:uninstall": "node ./out/uninstall.js",
+    "package": "node ../scripts/copy-pet-for-vsix.js && npx @vscode/vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.2.1",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.0"
+  }
+}
