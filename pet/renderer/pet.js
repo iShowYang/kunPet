@@ -3,34 +3,17 @@ const img = document.getElementById("pet-img");
 const bubble = document.getElementById("celebrate-bubble");
 const bubbleText = bubble.querySelector(".bubble-text");
 
-const IDLE_SRC = "kun-idle.png";
-const CELEBRATE_SRC = "kun-celebrate.png";
+/** 平常待机：抱篮球睡觉 */
 const REST_SRC = "kun-rest.png";
+/** 对话进行中：插兜 wink */
+const WORKING_SRC = "kun-idle.png";
+/** 完成庆祝：竖大拇指 */
+const CELEBRATE_SRC = "kun-celebrate.png";
 
 const CELEBRATE_MESSAGES = ["完成了！", "搞定啦！", "这轮结束～"];
 
-let idleFlipTimer;
-
 function pickCelebrateMessage() {
   return CELEBRATE_MESSAGES[Math.floor(Math.random() * CELEBRATE_MESSAGES.length)];
-}
-
-function setIdleFrame(useRest) {
-  img.src = useRest ? REST_SRC : IDLE_SRC;
-}
-
-function startIdleCycle() {
-  clearInterval(idleFlipTimer);
-  setIdleFrame(false);
-  idleFlipTimer = setInterval(() => {
-    if (!pet.classList.contains("idle")) return;
-    const currentlyRest = img.getAttribute("src") === REST_SRC;
-    if (currentlyRest) {
-      setIdleFrame(false);
-    } else if (Math.random() < 0.35) {
-      setIdleFrame(true);
-    }
-  }, 8000);
 }
 
 function showBubble(message) {
@@ -41,12 +24,35 @@ function showBubble(message) {
   bubble.classList.add("is-visible");
 }
 
+function hideBubble() {
+  bubble.hidden = true;
+  bubble.classList.remove("is-visible");
+}
+
+function enterIdle() {
+  pet.classList.remove("celebrate", "walking", "working");
+  pet.classList.add("idle");
+  document.body.style.webkitAppRegion = "drag";
+  img.classList.remove("face-left");
+  img.src = REST_SRC;
+  hideBubble();
+}
+
+function enterWorking() {
+  pet.classList.remove("celebrate", "walking", "idle");
+  pet.classList.add("working");
+  document.body.style.webkitAppRegion = "drag";
+  img.classList.remove("face-left");
+  img.src = WORKING_SRC;
+  hideBubble();
+}
+
 function enterWalking(direction) {
-  clearInterval(idleFlipTimer);
-  pet.classList.remove("idle", "celebrate");
+  pet.classList.remove("idle", "celebrate", "working");
   pet.classList.add("walking");
   document.body.style.webkitAppRegion = "no-drag";
-  img.src = IDLE_SRC;
+  // 走动时用插兜图，更有「在动」感
+  img.src = WORKING_SRC;
   img.classList.toggle("face-left", direction === "left");
 }
 
@@ -57,22 +63,11 @@ function exitWalking() {
 
 function enterCelebrate() {
   exitWalking();
-  clearInterval(idleFlipTimer);
-  pet.classList.remove("idle");
+  pet.classList.remove("idle", "working");
   pet.classList.add("celebrate");
   document.body.style.webkitAppRegion = "no-drag";
   img.src = CELEBRATE_SRC;
   showBubble(pickCelebrateMessage());
-}
-
-function forceIdle() {
-  exitWalking();
-  pet.classList.remove("celebrate");
-  bubble.hidden = true;
-  bubble.classList.remove("is-visible");
-  pet.classList.add("idle");
-  document.body.style.webkitAppRegion = "drag";
-  startIdleCycle();
 }
 
 window.kunpet.onWalkStart(({ direction }) => {
@@ -81,11 +76,7 @@ window.kunpet.onWalkStart(({ direction }) => {
 
 window.kunpet.onWalkEnd(() => {
   exitWalking();
-  if (!pet.classList.contains("celebrate")) {
-    pet.classList.add("idle");
-    document.body.style.webkitAppRegion = "drag";
-    startIdleCycle();
-  }
+  // 最终姿势由随后的 pet:idle / pet:working 决定；celebrate 保持不动
 });
 
 window.kunpet.onCelebrate(() => {
@@ -93,7 +84,11 @@ window.kunpet.onCelebrate(() => {
 });
 
 window.kunpet.onIdle(() => {
-  forceIdle();
+  enterIdle();
+});
+
+window.kunpet.onWorking(() => {
+  enterWorking();
 });
 
 pet.addEventListener("click", () => {
@@ -102,4 +97,4 @@ pet.addEventListener("click", () => {
   }
 });
 
-startIdleCycle();
+enterIdle();

@@ -133,6 +133,14 @@ body {
 }
 
 #pet.idle img {
+  animation: breathe 3.2s ease-in-out infinite;
+}
+
+#pet.working {
+  -webkit-app-region: drag;
+}
+
+#pet.working img {
   animation: breathe 2.5s ease-in-out infinite;
 }
 

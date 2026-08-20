@@ -13,7 +13,7 @@ let tray;
 let rendererReady = false;
 const pendingRendererEvents = [];
 
-/** @type {"idle"|"walking-to-center"|"celebrate"|"walking-back"} */
+/** @type {"idle"|"working"|"walking-to-center"|"celebrate"|"walking-back"} */
 let petState = "idle";
 /** @type {{x:number,y:number}|null} */
 let originPosition = null;
@@ -23,6 +23,8 @@ let activeTween = null;
 let walkEnabledForCurrentCelebrate = true;
 /** @type {boolean} */
 let prefsWalkToCenter = true;
+/** @type {"idle"|"working"|null} */
+let pendingHomePose = null;
 
 function argNum(name, fallback) {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -121,13 +123,49 @@ function setPetState(next) {
 }
 
 function celebrateInPlace() {
+  pendingHomePose = null;
   setPetState("celebrate");
   sendToRenderer("pet:celebrate");
+}
+
+function finishAtHome() {
+  originPosition = null;
+  const pose = pendingHomePose || "idle";
+  pendingHomePose = null;
+  setPetState(pose);
+  sendWalkEnd();
+  if (pose === "working") {
+    sendToRenderer("pet:working");
+  } else {
+    sendToRenderer("pet:idle");
+  }
+}
+
+function beginWorking() {
+  if (!win) return;
+  win.showInactive();
+
+  if (petState === "working") return;
+
+  if (petState === "celebrate" || petState === "walking-to-center") {
+    pendingHomePose = "working";
+    beginReturnIdle();
+    return;
+  }
+
+  if (petState === "walking-back") {
+    pendingHomePose = "working";
+    return;
+  }
+
+  setPetState("working");
+  sendToRenderer("pet:working");
 }
 
 function beginCelebrate(walkToCenter) {
   if (!win) return;
   win.showInactive();
+  pendingHomePose = null;
 
   const shouldWalk = walkToCenter !== false;
   walkEnabledForCurrentCelebrate = shouldWalk;
@@ -175,24 +213,27 @@ function beginCelebrate(walkToCenter) {
 
 function beginReturnIdle() {
   if (!win) return;
-  if (petState === "idle" || petState === "walking-back") return;
+  if (petState === "idle") return;
+  if (petState === "walking-back") return;
+
+  if (petState === "working") {
+    pendingHomePose = null;
+    setPetState("idle");
+    sendToRenderer("pet:idle");
+    return;
+  }
 
   cancelTween();
 
   if (!walkEnabledForCurrentCelebrate) {
-    originPosition = null;
-    setPetState("idle");
-    sendWalkEnd();
-    sendToRenderer("pet:idle");
+    finishAtHome();
     return;
   }
 
   const target = originPosition ?? getWindowPos();
   setPetState("walking-back");
   tweenTo(target.x, target.y, () => {
-    originPosition = null;
-    setPetState("idle");
-    sendWalkEnd();
+    finishAtHome();
   });
 }
 
@@ -240,7 +281,11 @@ function handleMessage(msg) {
       beginCelebrate(msg.walkToCenter !== false);
       break;
     case "return-idle":
+      pendingHomePose = "idle";
       beginReturnIdle();
+      break;
+    case "working":
+      beginWorking();
       break;
     case "show":
       win.showInactive();
@@ -265,6 +310,7 @@ function handleMessage(msg) {
 function setupRendererIpc() {
   ipcMain.on("pet:dismiss-celebrate", () => {
     if (petState === "celebrate") {
+      pendingHomePose = "idle";
       beginReturnIdle();
     }
   });

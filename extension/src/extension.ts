@@ -95,7 +95,8 @@ function handleAgentStart(): void {
     log("[disabled] agent_start received, pet not running");
     return;
   }
-  pet?.send({ type: "return-idle" });
+  // 对话进行中：插兜 wink；若正在庆祝则先走回再切 working
+  pet?.send({ type: "working" });
 }
 
 function log(message: string): void {

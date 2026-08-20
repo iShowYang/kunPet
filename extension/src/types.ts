@@ -20,6 +20,7 @@ export type AgentEvent = AgentStopEvent | AgentStartEvent;
 export type PetIpcMessage =
   | { type: "celebrate"; walkToCenter?: boolean }
   | { type: "return-idle" }
+  | { type: "working" }
   | { type: "show" }
   | { type: "hide" }
   | { type: "set-position"; x: number; y: number }
