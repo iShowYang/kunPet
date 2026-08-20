@@ -81,6 +81,17 @@ Hook 脚本由扩展复制到 `%USERPROFILE%\.cursor\hooks\kunpet-notify.js`（�
 | `beforeSubmitPrompt` | 发送 Agent 消息 | `agent_prompt` |
 | `sessionStart` | 新 Session | `agent_session_start` |
 
+## 设置
+
+Cursor / VS Code 设置中搜索 `kunPet`：
+
+| 设置 | 默认 | 说明 |
+|------|------|------|
+| `kunpet.enabled` | `true` | 启用桌宠；关闭后不启动进程，Agent 事件仅写 Output |
+| `kunpet.walkToCenter` | `true` | 完成时走到主屏中央；关闭则原地庆祝 |
+
+对应命令：`kunPet: 启用/禁用桌宠`、`kunPet: 开启/关闭走到中间`（与设置双向同步）。
+
 ## 验收清单
 
 按顺序在本机 Cursor（扩展开发宿主或已安装 VSIX）上逐项确认：
@@ -94,5 +105,8 @@ Hook 脚本由扩展复制到 `%USERPROFILE%\.cursor\hooks\kunpet-notify.js`（�
 7. **隐藏后完成**：手动隐藏 → Agent 完成 → 先 show 再 walk → 庆祝
 8. **静默失败**：手动结束桌宠进程后，再触发 Hook 或测试命令 → Cursor 无报错、Agent 正常
 9. **Hook 合并**：预置其他 Hook 条目 → 激活后 kunPet 三条均在且原有条目保留
+10. **关闭走到中间**：设置关闭 → 测试完成提醒 → 原地庆祝；点击后原地回 idle
+11. **禁用桌宠**：禁用命令 → 无窗口；Agent 完成 → Output「kunPet」出现 `[disabled] agent_stop...`；启用后桌宠恢复
+12. **设置持久化**：改两项后重启 Cursor → 状态保持
 
-详细设计见 [docs/superpowers/specs/2026-08-19-kunpet-walk-celebrate-design.md](docs/superpowers/specs/2026-08-19-kunpet-walk-celebrate-design.md)。
+详细设计见 [docs/superpowers/specs/2026-08-19-kunpet-walk-celebrate-design.md](docs/superpowers/specs/2026-08-19-kunpet-walk-celebrate-design.md)；设置开关见 [docs/superpowers/specs/2026-08-20-kunpet-settings-toggles-design.md](docs/superpowers/specs/2026-08-20-kunpet-settings-toggles-design.md)。
