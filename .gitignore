@@ -2,3 +2,13 @@ extension/pet/
 # AI Log Plugin 推荐忽略项
 .specstory/
 .ailog/
+
+# 本地工具 / 编辑器
+.superpowers/
+.vscode/
+
+# 依赖与构建产物
+extension/node_modules/
+extension/out/
+extension/*.vsix
+pet/node_modules/
