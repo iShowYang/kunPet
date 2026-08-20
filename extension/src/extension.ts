@@ -5,6 +5,12 @@ import { startEventServer } from "./event-server";
 import { cleanupKunPetHook, ensureKunPetHook } from "./hook-manager";
 import { cleanupElectronRuntimeAt } from "./runtime-cleanup";
 import { PetProcess } from "./pet-process";
+import { readKunPetSettings } from "./settings";
+import {
+  CONFIG_ENABLED,
+  CONFIG_SECTION,
+  CONFIG_WALK_TO_CENTER,
+} from "./types";
 
 const POSITION_KEY = "kunpet.position";
 
@@ -13,6 +19,7 @@ let pet: PetProcess | undefined;
 let closeServer: (() => Promise<void>) | undefined;
 let eventPort: number | undefined;
 let hookSource: string | undefined;
+let extensionContext: vscode.ExtensionContext | undefined;
 
 export function resolvePetRoot(extensionPath: string): string {
   const bundled = path.join(extensionPath, "pet");
@@ -33,11 +40,54 @@ function readSavedPosition(
   return undefined;
 }
 
+function currentSettings() {
+  return readKunPetSettings((section) => vscode.workspace.getConfiguration(section));
+}
+
+async function updateSetting(key: string, value: boolean): Promise<void> {
+  await vscode.workspace
+    .getConfiguration(CONFIG_SECTION)
+    .update(key, value, vscode.ConfigurationTarget.Global);
+}
+
+async function startPetIfNeeded(): Promise<void> {
+  if (!extensionContext || !pet) return;
+  const saved = readSavedPosition(extensionContext.globalState);
+  const petRoot = resolvePetRoot(extensionContext.extensionPath);
+  const runtimeDir = path.join(extensionContext.globalStorageUri.fsPath, "electron-runtime");
+  await pet.start({ petRoot, runtimeDir, x: saved?.x, y: saved?.y });
+  log("pet process started");
+}
+
+async function applyEnabled(): Promise<void> {
+  const { enabled } = currentSettings();
+  if (!enabled) {
+    pet?.stop();
+    log("pet disabled; process stopped");
+    return;
+  }
+  try {
+    await startPetIfNeeded();
+  } catch (err) {
+    log(`failed to start pet: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 function handleStop(): void {
-  pet?.send({ type: "celebrate" });
+  const { enabled, walkToCenter } = currentSettings();
+  if (!enabled) {
+    log("[disabled] agent_stop received, pet not running");
+    return;
+  }
+  pet?.send({ type: "celebrate", walkToCenter });
 }
 
 function handleAgentStart(): void {
+  const { enabled } = currentSettings();
+  if (!enabled) {
+    log("[disabled] agent_start received, pet not running");
+    return;
+  }
   pet?.send({ type: "return-idle" });
 }
 
@@ -46,6 +96,7 @@ function log(message: string): void {
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  extensionContext = context;
   channel = vscode.window.createOutputChannel("kunPet");
   context.subscriptions.push(channel);
   log("activating kunPet");
@@ -83,13 +134,41 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     vscode.commands.registerCommand("kunpet.show", () => {
+      if (!currentSettings().enabled) {
+        log("[disabled] show ignored");
+        return;
+      }
       pet?.send({ type: "show" });
     }),
     vscode.commands.registerCommand("kunpet.hide", () => {
+      if (!currentSettings().enabled) {
+        log("[disabled] hide ignored");
+        return;
+      }
       pet?.send({ type: "hide" });
     }),
     vscode.commands.registerCommand("kunpet.testCelebrate", () => {
       handleStop();
+    }),
+    vscode.commands.registerCommand("kunpet.enable", async () => {
+      await updateSetting(CONFIG_ENABLED, true);
+      await applyEnabled();
+    }),
+    vscode.commands.registerCommand("kunpet.disable", async () => {
+      await updateSetting(CONFIG_ENABLED, false);
+      await applyEnabled();
+    }),
+    vscode.commands.registerCommand("kunpet.enableWalkToCenter", async () => {
+      await updateSetting(CONFIG_WALK_TO_CENTER, true);
+      log("walkToCenter enabled");
+    }),
+    vscode.commands.registerCommand("kunpet.disableWalkToCenter", async () => {
+      await updateSetting(CONFIG_WALK_TO_CENTER, false);
+      log("walkToCenter disabled");
+    }),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration(CONFIG_SECTION)) return;
+      void applyEnabled();
     }),
     vscode.commands.registerCommand("kunpet.reregisterHook", async () => {
       if (eventPort === undefined || !hookSource) {
@@ -124,15 +203,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     })
   );
 
-  const saved = readSavedPosition(context.globalState);
-  const petRoot = resolvePetRoot(context.extensionPath);
-  const runtimeDir = path.join(context.globalStorageUri.fsPath, "electron-runtime");
-  void pet
-    .start({ petRoot, runtimeDir, x: saved?.x, y: saved?.y })
-    .then(() => log("pet process started"))
-    .catch((err) => {
-      log(`failed to start pet: ${err instanceof Error ? err.message : String(err)}`);
-    });
+  void applyEnabled();
 }
 
 export async function deactivate(): Promise<void> {
