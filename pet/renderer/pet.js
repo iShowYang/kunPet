@@ -106,6 +106,30 @@ window.kunpet.onWorking(() => {
   enterWorking();
 });
 
+function canDragFromImg() {
+  return pet.classList.contains("idle") || pet.classList.contains("working");
+}
+
+let imgDragging = false;
+
+img.addEventListener("mousedown", (event) => {
+  if (event.button !== 0) return;
+  if (!canDragFromImg()) return;
+  imgDragging = true;
+  window.kunpet.windowDrag("start", event.screenX, event.screenY);
+});
+
+window.addEventListener("mousemove", (event) => {
+  if (!imgDragging) return;
+  window.kunpet.windowDrag("move", event.screenX, event.screenY);
+});
+
+window.addEventListener("mouseup", (event) => {
+  if (!imgDragging) return;
+  imgDragging = false;
+  window.kunpet.windowDrag("end", event.screenX, event.screenY);
+});
+
 img.addEventListener("contextmenu", (event) => {
   event.preventDefault();
   event.stopPropagation();

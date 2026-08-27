@@ -16,6 +16,8 @@ fs.mkdirSync(petUserData, { recursive: true });
 app.setPath("userData", petUserData);
 
 let win;
+/** @type {{ x: number, y: number } | null} */
+let dragOffset = null;
 let tray;
 /** @type {Electron.Menu|null} */
 let trayMenu = null;
@@ -339,6 +341,28 @@ function setupRendererIpc() {
   });
   ipcMain.on("pet:show-context-menu", () => {
     popupPetContextMenu();
+  });
+  ipcMain.on("pet:window-drag", (_event, payload) => {
+    if (!win || win.isDestroyed()) return;
+    if (!payload || typeof payload !== "object") return;
+    const { phase, screenX, screenY } = payload;
+    if (typeof screenX !== "number" || typeof screenY !== "number") return;
+
+    if (phase === "start") {
+      const [wx, wy] = win.getPosition();
+      dragOffset = { x: screenX - wx, y: screenY - wy };
+      return;
+    }
+    if (phase === "move" && dragOffset) {
+      win.setPosition(
+        Math.round(screenX - dragOffset.x),
+        Math.round(screenY - dragOffset.y)
+      );
+      return;
+    }
+    if (phase === "end") {
+      dragOffset = null;
+    }
   });
 }
 

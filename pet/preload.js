@@ -10,4 +10,6 @@ contextBridge.exposeInMainWorld("kunpet", {
   onWorking: (cb) => ipcRenderer.on("pet:working", () => cb()),
   dismissCelebrate: () => ipcRenderer.send("pet:dismiss-celebrate"),
   showContextMenu: () => ipcRenderer.send("pet:show-context-menu"),
+  windowDrag: (phase, screenX, screenY) =>
+    ipcRenderer.send("pet:window-drag", { phase, screenX, screenY }),
 });
