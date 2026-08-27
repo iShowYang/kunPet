@@ -9,4 +9,5 @@ contextBridge.exposeInMainWorld("kunpet", {
   onIdle: (cb) => ipcRenderer.on("pet:idle", () => cb()),
   onWorking: (cb) => ipcRenderer.on("pet:working", () => cb()),
   dismissCelebrate: () => ipcRenderer.send("pet:dismiss-celebrate"),
+  showContextMenu: () => ipcRenderer.send("pet:show-context-menu"),
 });

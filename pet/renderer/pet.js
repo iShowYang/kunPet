@@ -106,6 +106,23 @@ window.kunpet.onWorking(() => {
   enterWorking();
 });
 
+function isPointInPetImg(clientX, clientY) {
+  const rect = img.getBoundingClientRect();
+  return (
+    clientX >= rect.left &&
+    clientX <= rect.right &&
+    clientY >= rect.top &&
+    clientY <= rect.bottom
+  );
+}
+
+pet.addEventListener("contextmenu", (event) => {
+  if (!isPointInPetImg(event.clientX, event.clientY)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  window.kunpet.showContextMenu();
+});
+
 pet.addEventListener("click", () => {
   if (pet.classList.contains("celebrate")) {
     window.kunpet.dismissCelebrate();

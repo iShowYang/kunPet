@@ -331,6 +331,9 @@ function setupRendererIpc() {
       beginReturnIdle();
     }
   });
+  ipcMain.on("pet:show-context-menu", () => {
+    popupPetContextMenu();
+  });
 }
 
 function startIpcServer() {
@@ -405,9 +408,16 @@ function emitToExtension(msg) {
   process.stdout.write(JSON.stringify(msg) + "\n");
 }
 
-function rebuildTrayMenu() {
-  if (!tray) return;
-  trayMenu = Menu.buildFromTemplate([
+function notifyExtension(msg) {
+  if (typeof postTrayEvent === "function") {
+    postTrayEvent(msg);
+    return;
+  }
+  emitToExtension(msg);
+}
+
+function buildContextMenuTemplate() {
+  return [
     { label: "显示", click: () => win?.showInactive() },
     { label: "隐藏", click: () => win?.hide() },
     { type: "separator" },
@@ -416,20 +426,31 @@ function rebuildTrayMenu() {
       click: () => {
         const next = !prefsWalkToCenter;
         prefsWalkToCenter = next;
-        emitToExtension({ type: "request-walk-to-center", value: next });
+        notifyExtension({ type: "request-walk-to-center", value: next });
         rebuildTrayMenu();
       },
     },
     { type: "separator" },
     {
       label: "禁用桌宠",
-      click: () => emitToExtension({ type: "request-disable" }),
+      click: () => notifyExtension({ type: "request-disable" }),
     },
     {
       label: "打开设置",
-      click: () => emitToExtension({ type: "request-open-settings" }),
+      click: () => notifyExtension({ type: "request-open-settings" }),
     },
-  ]);
+  ];
+}
+
+function popupPetContextMenu() {
+  if (!win || win.isDestroyed()) return;
+  const menu = Menu.buildFromTemplate(buildContextMenuTemplate());
+  menu.popup({ window: win });
+}
+
+function rebuildTrayMenu() {
+  if (!tray) return;
+  trayMenu = Menu.buildFromTemplate(buildContextMenuTemplate());
   // macOS/Linux 依赖 setContextMenu；Windows 用 right-click + popUp，避免菜单不出现
   if (process.platform === "win32") {
     tray.setContextMenu(null);
