@@ -12,3 +12,6 @@ extension/node_modules/
 extension/out/
 extension/*.vsix
 pet/node_modules/
+
+# git worktrees (local feature branches)
+.worktrees/

@@ -1,5 +1,7 @@
 const { app, BrowserWindow, Tray, Menu, nativeImage, screen, ipcMain } = require("electron");
+const fs = require("fs");
 const http = require("http");
+const os = require("os");
 const path = require("path");
 const {
   computeTweenDurationMs,
@@ -8,6 +10,10 @@ const {
   pickWalkStyleId,
   sampleWalkPose,
 } = require("./tween");
+
+const petUserData = path.join(os.tmpdir(), "kunpet-electron", String(process.pid));
+fs.mkdirSync(petUserData, { recursive: true });
+app.setPath("userData", petUserData);
 
 let win;
 let tray;

@@ -128,16 +128,13 @@ body {
   height: auto;
   max-height: 168px;
   object-fit: contain;
-  pointer-events: none;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
   image-rendering: auto;
 }
 
 #pet.idle img {
   animation: breathe 3.2s ease-in-out infinite;
-}
-
-#pet.working {
-  -webkit-app-region: drag;
 }
 
 #pet.working img {
@@ -164,7 +161,6 @@ body {
 
 #pet.celebrate img {
   animation: celebrate 0.7s ease-in-out infinite;
-  pointer-events: auto;
 }
 
 @keyframes breathe {

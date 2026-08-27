@@ -106,18 +106,7 @@ window.kunpet.onWorking(() => {
   enterWorking();
 });
 
-function isPointInPetImg(clientX, clientY) {
-  const rect = img.getBoundingClientRect();
-  return (
-    clientX >= rect.left &&
-    clientX <= rect.right &&
-    clientY >= rect.top &&
-    clientY <= rect.bottom
-  );
-}
-
-pet.addEventListener("contextmenu", (event) => {
-  if (!isPointInPetImg(event.clientX, event.clientY)) return;
+img.addEventListener("contextmenu", (event) => {
   event.preventDefault();
   event.stopPropagation();
   window.kunpet.showContextMenu();
