@@ -1,5 +1,5 @@
 import http from "node:http";
-import type { AgentStartEvent, AgentStopEvent } from "./types";
+import type { AgentStartEvent, AgentStopEvent, TrayEvent } from "./types";
 import { AGENT_START_DEDUPE_MS, DEDUPE_WINDOW_MS } from "./types";
 
 export function shouldDedupe(now: number, lastTs: number, windowMs: number): boolean {
@@ -25,15 +25,30 @@ function isAgentStart(body: unknown): body is AgentStartEvent {
   );
 }
 
+export function isTrayEvent(body: unknown): body is TrayEvent {
+  if (typeof body !== "object" || body === null) return false;
+  const typed = body as TrayEvent;
+  if (typed.type === "request-disable" || typed.type === "request-open-settings") {
+    return true;
+  }
+  return typed.type === "request-walk-to-center" && typeof typed.value === "boolean";
+}
+
 export async function startEventServer(opts: {
   onAgentStop: (e: AgentStopEvent) => void;
   onAgentStart: (e: AgentStartEvent) => void;
+  onTrayEvent?: (e: TrayEvent) => void;
   preferredPort?: number;
 }): Promise<{ port: number; close: () => Promise<void> }> {
   let lastStopTs = 0;
   let lastStartTs = 0;
 
   const server = http.createServer((req, res) => {
+    if (req.method === "GET" && req.url === "/health") {
+      res.writeHead(200).end("ok");
+      return;
+    }
+
     if (req.method === "POST" && req.url === "/event") {
       const chunks: Buffer[] = [];
       req.on("data", (c) => chunks.push(c));
@@ -58,6 +73,11 @@ export async function startEventServer(opts: {
             }
             lastStartTs = now;
             opts.onAgentStart(body);
+            res.writeHead(200).end("ok");
+            return;
+          }
+          if (isTrayEvent(body)) {
+            opts.onTrayEvent?.(body);
             res.writeHead(200).end("ok");
             return;
           }

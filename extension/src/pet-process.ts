@@ -33,6 +33,12 @@ export type PetStartOpts = {
   runtimeDir: string;
   x?: number;
   y?: number;
+  onReady?: (ipcPort: number) => void;
+};
+
+export type PetStopOpts = {
+  /** Kill the Electron child process (owner only). Default true. */
+  killProcess?: boolean;
 };
 
 export class PetProcess {
@@ -51,17 +57,40 @@ export class PetProcess {
   private readonly log?: (line: string) => void;
   private consecutiveIpcFailures = 0;
   private restartRequested = false;
+  private mode: "owner" | "client" | undefined;
+  private onReadyCallback?: (ipcPort: number) => void;
 
   constructor(opts?: { log?: (line: string) => void }) {
     this.log = opts?.log;
   }
 
+  isOwner(): boolean {
+    return this.mode === "owner";
+  }
+
+  isAttached(): boolean {
+    return this.ipcPort !== undefined;
+  }
+
+  async attach(ipcPort: number): Promise<void> {
+    if (this.ipcPort === ipcPort && this.mode === "client") return;
+    this.detachLocal();
+    this.mode = "client";
+    this.ipcPort = ipcPort;
+    this.consecutiveIpcFailures = 0;
+    this.restartRequested = false;
+    this.flushPendingMessages();
+    this.log?.(`attached to existing pet on port ${ipcPort}`);
+  }
+
   async start(opts: PetStartOpts): Promise<void> {
     if (this.child) return;
+    if (this.mode === "client" && this.ipcPort !== undefined) return;
     if (this.startPromise) return this.startPromise;
 
     this.restartRequested = false;
     this.consecutiveIpcFailures = 0;
+    this.onReadyCallback = opts.onReady;
 
     this.startPromise = this.startInternal(opts).finally(() => {
       this.startPromise = undefined;
@@ -82,6 +111,7 @@ export class PetProcess {
     this.stopping = false;
     this.ipcPort = undefined;
     this.pendingMessages = [];
+    this.mode = "owner";
 
     // Extension Host sets ELECTRON_RUN_AS_NODE; if inherited, electron.exe
     // runs as Node and crashes (app.whenReady is undefined) — no pet window.
@@ -91,6 +121,7 @@ export class PetProcess {
     const child = spawn(electron, args, {
       cwd: opts.petRoot,
       env,
+      detached: true,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
@@ -147,18 +178,43 @@ export class PetProcess {
     void this.deliver(msg);
   }
 
-  stop(): void {
+  stop(opts?: PetStopOpts): void {
+    const killProcess = opts?.killProcess ?? true;
+    if (this.mode === "client") {
+      this.detachLocal();
+      return;
+    }
     if (!this.child) {
-      this.ipcPort = undefined;
-      this.pendingMessages = [];
+      this.detachLocal();
+      return;
+    }
+    if (!killProcess) {
+      this.releaseOwnedChild();
       return;
     }
     this.stopping = true;
-    this.ipcPort = undefined;
-    this.pendingMessages = [];
     const child = this.child;
     this.child = undefined;
+    this.detachLocal();
     child.kill();
+  }
+
+  private releaseOwnedChild(): void {
+    const child = this.child;
+    this.child = undefined;
+    this.detachLocal();
+    if (!child) return;
+    child.stdout?.removeAllListeners();
+    child.stderr?.removeAllListeners();
+    child.removeAllListeners();
+    child.unref();
+  }
+
+  private detachLocal(): void {
+    this.mode = undefined;
+    this.ipcPort = undefined;
+    this.pendingMessages = [];
+    this.onReadyCallback = undefined;
   }
 
   private flushPendingMessages(): void {
@@ -269,6 +325,7 @@ export class PetProcess {
         this.ipcPort = rec.ipcPort;
         this.consecutiveIpcFailures = 0;
         this.restartRequested = false;
+        this.onReadyCallback?.(rec.ipcPort);
         this.flushPendingMessages();
       }
       onReady();

@@ -17,6 +17,13 @@ export type AgentStartEvent = AgentPromptEvent | AgentSessionStartEvent;
 
 export type AgentEvent = AgentStopEvent | AgentStartEvent;
 
+export type TrayEvent =
+  | { type: "request-disable" }
+  | { type: "request-walk-to-center"; value: boolean }
+  | { type: "request-open-settings" };
+
+export type KunPetEvent = AgentEvent | TrayEvent;
+
 export type PetIpcMessage =
   | { type: "celebrate"; walkToCenter?: boolean }
   | { type: "return-idle"; force?: boolean }
@@ -36,6 +43,8 @@ export type PortFileContents = {
 };
 
 export const PORT_FILE_NAME = "kunpet-port.json";
+export const HOSTS_FILE_NAME = "kunpet-hosts.json";
+export const PET_FILE_NAME = "kunpet-pet.json";
 export const HOOK_SCRIPT_NAME = "kunpet-notify.js";
 /** Guard against duplicate stop hooks for the same turn; keep short so rapid turns still celebrate. */
 export const DEDUPE_WINDOW_MS = 400;

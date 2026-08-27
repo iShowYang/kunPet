@@ -1,8 +1,10 @@
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import * as vscode from "vscode";
 import { startEventServer } from "./event-server";
 import { cleanupKunPetHook, ensureKunPetHook } from "./hook-manager";
+import { HEARTBEAT_INTERVAL_MS, HostCoordinator } from "./host-coordinator";
 import { resolveSessionStartMessage } from "./ipc-resilience";
 import { cleanupElectronRuntimeAt } from "./runtime-cleanup";
 import { PetProcess } from "./pet-process";
@@ -17,10 +19,13 @@ const POSITION_KEY = "kunpet.position";
 
 let channel: vscode.OutputChannel | undefined;
 let pet: PetProcess | undefined;
+let coordinator: HostCoordinator | undefined;
 let closeServer: (() => Promise<void>) | undefined;
 let eventPort: number | undefined;
+let ownsEventServer = false;
 let hookSource: string | undefined;
 let extensionContext: vscode.ExtensionContext | undefined;
+let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
 /** True after agent_prompt until celebrate/stop or forced idle. */
 let awaitingCelebrate = false;
 let restartingPet = false;
@@ -54,21 +59,108 @@ async function updateSetting(key: string, value: boolean): Promise<void> {
     .update(key, value, vscode.ConfigurationTarget.Global);
 }
 
+async function ensureEventServer(): Promise<void> {
+  if (!coordinator || !extensionContext || !hookSource) return;
+  if (ownsEventServer && eventPort !== undefined) return;
+
+  const action = await coordinator.resolveEventServerAction();
+  if (action.action === "attach" && action.port !== undefined) {
+    eventPort = action.port;
+    ownsEventServer = false;
+    log(`attached to existing event server on 127.0.0.1:${action.port}`);
+    return;
+  }
+
+  try {
+    const server = await startEventServer({
+      onAgentStop: () => handleStop(),
+      onAgentStart: (e) => handleAgentStart(e),
+      onTrayEvent: (e) => handleTrayEvent(e),
+    });
+    eventPort = server.port;
+    closeServer = server.close;
+    ownsEventServer = true;
+    coordinator.setEventPort(server.port);
+    await coordinator.heartbeat();
+    log(`event server listening on 127.0.0.1:${server.port}`);
+    await ensureKunPetHook({
+      extensionHookSource: hookSource,
+      port: server.port,
+    });
+    log("hook registered");
+  } catch (err) {
+    log(`failed to start event server: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+async function maybeTakeOverEventServer(): Promise<void> {
+  if (!coordinator || !hookSource) return;
+  if (ownsEventServer) return;
+  const action = await coordinator.resolveEventServerAction();
+  if (action.action === "attach") {
+    eventPort = action.port;
+    return;
+  }
+  log("event server dead; taking over");
+  await ensureEventServer();
+}
+
+function handleTrayEvent(
+  e:
+    | { type: "request-disable" }
+    | { type: "request-walk-to-center"; value: boolean }
+    | { type: "request-open-settings" }
+): void {
+  if (e.type === "request-disable") {
+    void (async () => {
+      await updateSetting(CONFIG_ENABLED, false);
+      await applyEnabled();
+      log("disabled via tray");
+    })();
+    return;
+  }
+  if (e.type === "request-walk-to-center") {
+    void (async () => {
+      await updateSetting(CONFIG_WALK_TO_CENTER, e.value);
+      syncPrefsToPet();
+      log(`walkToCenter ${e.value ? "enabled" : "disabled"} via tray`);
+    })();
+    return;
+  }
+  void vscode.commands.executeCommand("kunpet.openSettings");
+}
+
 async function startPetIfNeeded(): Promise<void> {
-  if (!extensionContext || !pet) return;
+  if (!extensionContext || !pet || !coordinator) return;
+
+  const action = await coordinator.resolvePetAction();
+  if (action.action === "attach" && action.ipcPort !== undefined) {
+    await pet.attach(action.ipcPort);
+    log(`attached to existing pet on port ${action.ipcPort}`);
+    return;
+  }
+
   const saved = readSavedPosition(extensionContext.globalState);
   const petRoot = resolvePetRoot(extensionContext.extensionPath);
   const runtimeDir = path.join(extensionContext.globalStorageUri.fsPath, "electron-runtime");
-  await pet.start({ petRoot, runtimeDir, x: saved?.x, y: saved?.y });
+  await pet.start({
+    petRoot,
+    runtimeDir,
+    x: saved?.x,
+    y: saved?.y,
+    onReady: (ipcPort) => coordinator?.publishPetInfo(ipcPort),
+  });
   log("pet process started");
 }
 
 async function restartPetAfterIpcFailure(): Promise<void> {
-  if (restartingPet || !pet || !currentSettings().enabled) return;
+  if (restartingPet || !pet || !coordinator || !currentSettings().enabled) return;
   restartingPet = true;
   try {
     log("restarting pet process after IPC failures");
-    pet.stop();
+    const wasOwner = pet.isOwner();
+    pet.stop({ killProcess: wasOwner });
+    if (wasOwner) coordinator.clearPetInfo();
     await startPetIfNeeded();
     syncPrefsToPet();
   } catch (err) {
@@ -83,7 +175,12 @@ async function restartPetAfterIpcFailure(): Promise<void> {
 async function applyEnabled(): Promise<void> {
   const { enabled, walkToCenter } = currentSettings();
   if (!enabled) {
-    pet?.stop();
+    if (pet?.isOwner()) {
+      pet.stop({ killProcess: true });
+      coordinator?.clearPetInfo();
+    } else {
+      pet?.stop({ killProcess: false });
+    }
     awaitingCelebrate = false;
     log("pet disabled; process stopped");
     return;
@@ -118,8 +215,6 @@ function handleAgentStart(e: { type: string }): void {
     log("[disabled] agent_start received, pet not running");
     return;
   }
-  // 仅 beforeSubmitPrompt：进入对话 → 插兜 wink
-  // sessionStart：解除庆祝；若 stop 丢失则 force 解卡回待机
   if (e.type === "agent_prompt") {
     awaitingCelebrate = true;
     pet?.send({ type: "working" });
@@ -137,11 +232,33 @@ function log(message: string): void {
   channel?.appendLine(message);
 }
 
+function startHeartbeat(context: vscode.ExtensionContext): void {
+  heartbeatTimer = setInterval(() => {
+    void (async () => {
+      if (!coordinator) return;
+      await coordinator.heartbeat();
+      await maybeTakeOverEventServer();
+    })();
+  }, HEARTBEAT_INTERVAL_MS);
+  context.subscriptions.push({
+    dispose: () => {
+      if (heartbeatTimer !== undefined) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = undefined;
+      }
+    },
+  });
+}
+
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   extensionContext = context;
   channel = vscode.window.createOutputChannel("kunPet");
   context.subscriptions.push(channel);
   log("activating kunPet");
+
+  coordinator = new HostCoordinator({ hostId: randomUUID() });
+  await coordinator.registerHost();
+  startHeartbeat(context);
 
   pet = new PetProcess({ log: (m) => channel?.appendLine(m) });
   pet.onIpcBroken = () => {
@@ -150,49 +267,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   pet.onMoved = (x, y) => {
     void context.globalState.update(POSITION_KEY, { x, y });
   };
-  pet.onRequestDisable = () => {
-    void (async () => {
-      await updateSetting(CONFIG_ENABLED, false);
-      await applyEnabled();
-      log("disabled via tray");
-    })();
-  };
-  pet.onRequestWalkToCenter = (value) => {
-    void (async () => {
-      await updateSetting(CONFIG_WALK_TO_CENTER, value);
-      syncPrefsToPet();
-      log(`walkToCenter ${value ? "enabled" : "disabled"} via tray`);
-    })();
-  };
-  pet.onRequestOpenSettings = () => {
-    void vscode.commands.executeCommand("kunpet.openSettings");
-  };
 
   hookSource = path.join(context.extensionPath, "hooks", "kunpet-notify.js");
-
-  try {
-    const server = await startEventServer({
-      onAgentStop: () => handleStop(),
-      onAgentStart: (e) => handleAgentStart(e),
-    });
-    eventPort = server.port;
-    closeServer = server.close;
-    log(`event server listening on 127.0.0.1:${server.port}`);
-  } catch (err) {
-    log(`failed to start event server: ${err instanceof Error ? err.message : String(err)}`);
-  }
-
-  if (eventPort !== undefined) {
-    try {
-      await ensureKunPetHook({
-        extensionHookSource: hookSource,
-        port: eventPort,
-      });
-      log("hook registered");
-    } catch (err) {
-      log(`failed to register hook: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
+  await ensureEventServer();
 
   context.subscriptions.push(
     vscode.commands.registerCommand("kunpet.show", () => {
@@ -270,13 +347,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (!self) {
         cleanupElectronRuntimeAt(context.globalStorageUri.fsPath);
         void cleanupKunPetHook();
-        pet?.stop();
+        pet?.stop({ killProcess: true });
+        coordinator?.clearPetInfo();
         log("extension removed; cleaned hook, runtime cache, and stopped pet");
         return;
       }
 
       void cleanupKunPetHook();
-      pet?.stop();
+      pet?.stop({ killProcess: true });
+      coordinator?.clearPetInfo();
       log("extension disabled; cleaned hook and stopped pet (runtime cache kept)");
     })
   );
@@ -288,8 +367,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 }
 
 export async function deactivate(): Promise<void> {
-  pet?.send({ type: "hide" });
-  if (closeServer) {
+  let shouldStopPet = true;
+  let remainingHosts = 0;
+  if (coordinator) {
+    const result = await coordinator.unregisterHost();
+    shouldStopPet = result.shouldStopPet;
+    remainingHosts = result.remainingHosts;
+  }
+
+  if (shouldStopPet) {
+    pet?.send({ type: "hide" });
+    pet?.stop({ killProcess: pet?.isOwner() ?? true });
+    coordinator?.clearPetInfo();
+  } else {
+    pet?.stop({ killProcess: false });
+  }
+
+  if (remainingHosts === 0 && ownsEventServer && closeServer) {
     try {
       await closeServer();
     } catch {
@@ -297,6 +391,8 @@ export async function deactivate(): Promise<void> {
     }
     closeServer = undefined;
   }
-  pet?.stop();
+
   eventPort = undefined;
+  ownsEventServer = false;
+  coordinator = undefined;
 }

@@ -369,6 +369,10 @@ function setupRendererIpc() {
 function startIpcServer() {
   return new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
+      if (req.method === "GET" && req.url === "/health") {
+        res.writeHead(200).end("ok");
+        return;
+      }
       if (req.method === "POST" && req.url === "/ipc") {
         const chunks = [];
         req.on("data", (chunk) => chunks.push(chunk));
@@ -438,6 +442,45 @@ function emitToExtension(msg) {
   process.stdout.write(JSON.stringify(msg) + "\n");
 }
 
+function readEventPort() {
+  try {
+    const portFile = path.join(os.homedir(), ".cursor", "kunpet-port.json");
+    if (!fs.existsSync(portFile)) return undefined;
+    const data = JSON.parse(fs.readFileSync(portFile, "utf8"));
+    return typeof data.port === "number" ? data.port : undefined;
+  } catch (_) {
+    return undefined;
+  }
+}
+
+function postTrayEvent(msg) {
+  const port = readEventPort();
+  if (!port) return;
+  const body = JSON.stringify(msg);
+  const req = http.request(
+    {
+      host: "127.0.0.1",
+      port,
+      path: "/event",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(body),
+      },
+      timeout: 2000,
+    },
+    (res) => {
+      res.resume();
+    }
+  );
+  req.on("error", () => {});
+  req.on("timeout", () => {
+    req.destroy();
+  });
+  req.write(body);
+  req.end();
+}
+
 function notifyExtension(msg) {
   if (typeof postTrayEvent === "function") {
     postTrayEvent(msg);
@@ -502,11 +545,16 @@ function setupTray() {
   }
 }
 
-app.whenReady().then(async () => {
-  setupRendererIpc();
-  const { server, port } = await startIpcServer();
-  ipcServer = server;
-  createWindow();
-  setupTray();
-  process.stdout.write(JSON.stringify({ type: "ready", ipcPort: port }) + "\n");
-});
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.whenReady().then(async () => {
+    setupRendererIpc();
+    const { server, port } = await startIpcServer();
+    ipcServer = server;
+    createWindow();
+    setupTray();
+    process.stdout.write(JSON.stringify({ type: "ready", ipcPort: port }) + "\n");
+  });
+}
