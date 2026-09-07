@@ -11,7 +11,9 @@ const {
   sampleWalkPose,
 } = require("./tween");
 
-const petUserData = path.join(os.tmpdir(), "kunpet-electron", String(process.pid));
+// Shared userData so requestSingleInstanceLock() works across spawns.
+// Per-pid userData made each process its own "app" and allowed multiple trays.
+const petUserData = path.join(os.tmpdir(), "kunpet-electron");
 fs.mkdirSync(petUserData, { recursive: true });
 app.setPath("userData", petUserData);
 
@@ -553,6 +555,14 @@ if (!gotSingleInstanceLock) {
     setupRendererIpc();
     const { server, port } = await startIpcServer();
     ipcServer = server;
+    try {
+      fs.writeFileSync(
+        path.join(petUserData, "ipc-port.json"),
+        JSON.stringify({ ipcPort: port, pid: process.pid, updatedAt: Date.now() })
+      );
+    } catch (_) {
+      /* ignore */
+    }
     createWindow();
     setupTray();
     process.stdout.write(JSON.stringify({ type: "ready", ipcPort: port }) + "\n");

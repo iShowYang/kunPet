@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import http from "node:http";
+import os from "node:os";
 import path from "node:path";
 import { getCursorHome, readPortFile } from "./hook-manager";
 
@@ -9,6 +10,9 @@ export const PET_FILE_NAME = "kunpet-pet.json";
 export const HEARTBEAT_INTERVAL_MS = 5000;
 export const HOST_STALE_MS = 15000;
 export const PET_HEALTH_TIMEOUT_MS = 2000;
+export const PET_STARTING_STALE_MS = 15000;
+export const PET_WAIT_TIMEOUT_MS = 12000;
+export const PET_WAIT_POLL_MS = 250;
 export const LOCK_RETRIES = 5;
 export const LOCK_RETRY_MS = 50;
 
@@ -24,11 +28,22 @@ export type HostsFile = {
   hosts: HostRecord[];
 };
 
-export type PetFile = {
+export type PetReadyFile = {
+  status?: "ready";
   ipcPort: number;
+  ownerPid: number;
+  ownerHostId?: string;
+  startedAt: number;
+};
+
+export type PetStartingFile = {
+  status: "starting";
+  ownerHostId: string;
   ownerPid: number;
   startedAt: number;
 };
+
+export type PetFile = PetReadyFile | PetStartingFile;
 
 function hostsPath(cursorHome: string): string {
   return path.join(cursorHome, HOSTS_FILE_NAME);
@@ -97,16 +112,41 @@ export function pruneStaleHosts(hosts: HostRecord[], now: number): HostRecord[] 
   return hosts.filter((host) => now - host.lastSeen <= HOST_STALE_MS);
 }
 
+export function isPetStarting(data: unknown): data is PetStartingFile {
+  if (typeof data !== "object" || data === null) return false;
+  const typed = data as PetStartingFile;
+  return (
+    typed.status === "starting" &&
+    typeof typed.ownerHostId === "string" &&
+    typeof typed.startedAt === "number"
+  );
+}
+
+export function isPetReady(data: unknown): data is PetReadyFile {
+  if (typeof data !== "object" || data === null) return false;
+  const typed = data as Record<string, unknown>;
+  if (typed.status === "starting") return false;
+  return typeof typed.ipcPort === "number";
+}
+
 export function readPetFile(cursorHome: string): PetFile | null {
   const file = petPath(cursorHome);
   if (!fs.existsSync(file)) return null;
   try {
-    const data = JSON.parse(fs.readFileSync(file, "utf8")) as PetFile;
-    if (typeof data.ipcPort === "number") return data;
+    const data = JSON.parse(fs.readFileSync(file, "utf8")) as unknown;
+    if (isPetStarting(data) || isPetReady(data)) return data;
   } catch {
     /* ignore */
   }
   return null;
+}
+
+function writePetFile(cursorHome: string, body: PetFile): void {
+  fs.mkdirSync(cursorHome, { recursive: true });
+  const file = petPath(cursorHome);
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(body));
+  fs.renameSync(tmp, file);
 }
 
 function deletePetInfoFile(cursorHome: string): void {
@@ -227,27 +267,112 @@ export class HostCoordinator {
     return this.eventPort;
   }
 
-  async resolvePetAction(): Promise<{ action: "spawn" | "attach"; ipcPort?: number }> {
+  /**
+   * Decide whether this host should spawn or attach.
+   * Uses a "starting" claim so two windows activating together do not both spawn.
+   */
+  async resolvePetAction(): Promise<{ action: "spawn" | "attach" | "wait"; ipcPort?: number }> {
+    const now = Date.now();
     const petFile = readPetFile(this.cursorHome);
-    if (!petFile) return { action: "spawn" };
-    const alive = await checkPetHealth(petFile.ipcPort);
-    if (alive) return { action: "attach", ipcPort: petFile.ipcPort };
-    deletePetInfoFile(this.cursorHome);
-    return { action: "spawn" };
+
+    if (petFile && isPetReady(petFile)) {
+      const alive = await checkPetHealth(petFile.ipcPort);
+      if (alive) return { action: "attach", ipcPort: petFile.ipcPort };
+      await withCoordinatorLock(this.cursorHome, () => {
+        const current = readPetFile(this.cursorHome);
+        if (current && isPetReady(current) && current.ipcPort === petFile.ipcPort) {
+          deletePetInfoFile(this.cursorHome);
+        }
+      });
+    }
+
+    // Orphaned Electron still holding the single-instance lock — attach instead of spawn.
+    const livePort = await this.discoverLivePetPort();
+    if (livePort !== undefined) {
+      this.publishPetInfo(livePort);
+      return { action: "attach", ipcPort: livePort };
+    }
+
+    return withCoordinatorLock(this.cursorHome, () => {
+      const current = readPetFile(this.cursorHome);
+      if (current && isPetReady(current)) {
+        // Another host may have published while we waited for the lock.
+        return { action: "wait" as const };
+      }
+      if (current && isPetStarting(current)) {
+        if (
+          current.ownerHostId !== this.hostId &&
+          now - current.startedAt <= PET_STARTING_STALE_MS
+        ) {
+          return { action: "wait" as const };
+        }
+      }
+      writePetFile(this.cursorHome, {
+        status: "starting",
+        ownerHostId: this.hostId,
+        ownerPid: this.pid,
+        startedAt: now,
+      });
+      return { action: "spawn" as const };
+    });
+  }
+
+  async waitForPetReady(
+    timeoutMs = PET_WAIT_TIMEOUT_MS
+  ): Promise<{ ipcPort: number } | null> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const petFile = readPetFile(this.cursorHome);
+      if (petFile && isPetReady(petFile)) {
+        const alive = await checkPetHealth(petFile.ipcPort);
+        if (alive) return { ipcPort: petFile.ipcPort };
+      }
+      if (petFile && isPetStarting(petFile) && petFile.ownerHostId === this.hostId) {
+        // Our own stale claim — let caller spawn again.
+        return null;
+      }
+      if (!petFile) return null;
+      await sleep(PET_WAIT_POLL_MS);
+    }
+    return null;
   }
 
   publishPetInfo(ipcPort: number): void {
-    const body: PetFile = {
+    writePetFile(this.cursorHome, {
+      status: "ready",
       ipcPort,
       ownerPid: this.pid,
+      ownerHostId: this.hostId,
       startedAt: Date.now(),
-    };
-    fs.mkdirSync(this.cursorHome, { recursive: true });
-    fs.writeFileSync(petPath(this.cursorHome), JSON.stringify(body));
+    });
   }
 
   clearPetInfo(): void {
     deletePetInfoFile(this.cursorHome);
+  }
+
+  clearStartingClaim(): void {
+    const current = readPetFile(this.cursorHome);
+    if (current && isPetStarting(current) && current.ownerHostId === this.hostId) {
+      deletePetInfoFile(this.cursorHome);
+    }
+  }
+
+  /**
+   * Fallback when Electron single-instance lock blocks a new spawn:
+   * the live pet writes ipc-port.json under the shared userData dir.
+   */
+  async discoverLivePetPort(): Promise<number | undefined> {
+    const file = path.join(os.tmpdir(), "kunpet-electron", "ipc-port.json");
+    if (!fs.existsSync(file)) return undefined;
+    try {
+      const data = JSON.parse(fs.readFileSync(file, "utf8")) as { ipcPort?: unknown };
+      if (typeof data.ipcPort !== "number") return undefined;
+      const alive = await checkPetHealth(data.ipcPort);
+      return alive ? data.ipcPort : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   async resolveEventServerAction(): Promise<{ action: "start" | "attach"; port?: number }> {

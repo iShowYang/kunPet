@@ -101,6 +101,41 @@ describe("HostCoordinator", () => {
     const coord = new HostCoordinator({ cursorHome, hostId: "host-g", pid: 707 });
     const action = await coord.resolvePetAction();
     assert.deepEqual(action, { action: "spawn" });
-    assert.equal(fs.existsSync(path.join(cursorHome, PET_FILE_NAME)), false);
+    const claim = JSON.parse(
+      fs.readFileSync(path.join(cursorHome, PET_FILE_NAME), "utf8")
+    ) as { status: string; ownerHostId: string };
+    assert.equal(claim.status, "starting");
+    assert.equal(claim.ownerHostId, "host-g");
+  });
+
+  it("second host waits while first holds starting claim", async () => {
+    const a = new HostCoordinator({ cursorHome, hostId: "host-h", pid: 808 });
+    const b = new HostCoordinator({ cursorHome, hostId: "host-i", pid: 909 });
+    assert.deepEqual(await a.resolvePetAction(), { action: "spawn" });
+    assert.deepEqual(await b.resolvePetAction(), { action: "wait" });
+  });
+
+  it("waitForPetReady attaches after publish", async () => {
+    const a = new HostCoordinator({ cursorHome, hostId: "host-j", pid: 1010 });
+    const b = new HostCoordinator({ cursorHome, hostId: "host-k", pid: 1111 });
+    await a.resolvePetAction();
+
+    const http = await import("node:http");
+    const server = http.createServer((req, res) => {
+      if (req.url === "/health") {
+        res.writeHead(200).end("ok");
+        return;
+      }
+      res.writeHead(404).end();
+    });
+    await new Promise<void>((resolve) => server.listen(57777, "127.0.0.1", resolve));
+
+    try {
+      setTimeout(() => a.publishPetInfo(57777), 100);
+      const ready = await b.waitForPetReady(3000);
+      assert.deepEqual(ready, { ipcPort: 57777 });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });

@@ -133,10 +133,34 @@ function handleTrayEvent(
 async function startPetIfNeeded(): Promise<void> {
   if (!extensionContext || !pet || !coordinator) return;
 
-  const action = await coordinator.resolvePetAction();
+  let action = await coordinator.resolvePetAction();
+
+  if (action.action === "wait") {
+    log("another host is spawning pet; waiting to attach");
+    const ready = await coordinator.waitForPetReady();
+    if (ready) {
+      await pet.attach(ready.ipcPort);
+      log(`attached to existing pet on port ${ready.ipcPort}`);
+      return;
+    }
+    // Claim timed out / disappeared — try once more to become owner.
+    action = await coordinator.resolvePetAction();
+  }
+
   if (action.action === "attach" && action.ipcPort !== undefined) {
     await pet.attach(action.ipcPort);
     log(`attached to existing pet on port ${action.ipcPort}`);
+    return;
+  }
+
+  if (action.action === "wait") {
+    const ready = await coordinator.waitForPetReady();
+    if (ready) {
+      await pet.attach(ready.ipcPort);
+      log(`attached to existing pet on port ${ready.ipcPort}`);
+      return;
+    }
+    log("timed out waiting for pet; giving up this attempt");
     return;
   }
 
@@ -150,6 +174,27 @@ async function startPetIfNeeded(): Promise<void> {
     y: saved?.y,
     onReady: (ipcPort) => coordinator?.publishPetInfo(ipcPort),
   });
+
+  // Race loser: Electron single-instance lock made our child quit before ready.
+  if (!pet.isAttached()) {
+    coordinator.clearStartingClaim();
+    const ready = await coordinator.waitForPetReady(5000);
+    if (ready) {
+      await pet.attach(ready.ipcPort);
+      log(`spawn lost race; attached to winning pet on port ${ready.ipcPort}`);
+      return;
+    }
+    const discovered = await coordinator.discoverLivePetPort();
+    if (discovered !== undefined) {
+      coordinator.publishPetInfo(discovered);
+      await pet.attach(discovered);
+      log(`attached to live pet discovered on port ${discovered}`);
+      return;
+    }
+    log("pet process started but never became ready");
+    return;
+  }
+
   log("pet process started");
 }
 
